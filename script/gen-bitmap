@@ -1,0 +1,289 @@
+#!/usr/bin/perl
+
+use strict;
+
+use Getopt::Long;
+use File::Basename qw/basename/;
+use File::Path qw/make_path/;
+use File::Spec::Functions qw/catfile/;
+
+my $script = basename(__FILE__);
+
+my %o = (
+  width     => 320,
+  height    => 240,
+  name      => 'bitmap',
+  alpha     => -1,
+  ops       => '',
+  format    => 'rgb888',
+  pack      => 0,
+  stat      => 1,
+  threshold => 0,
+  help      => 0,
+);
+my %fmt = (
+  argb   => \&pixel_to_argb,
+  rgb888 => \&pixel_to_rgb888,
+  rgb565 => \&pixel_to_rgb565,
+);
+my %ops = (blend => \&blend_bitmap, vflip => \&vfilp_bitmap,
+  hflip => \&hflip_bitmap,);
+
+GetOptions(
+  "width|w=i"     => \$o{width},
+  "height|h=i"    => \$o{height},
+  "name|n=s"      => \$o{name},
+  "alpha|a=i"     => \$o{alpha},
+  "ops|o=s"       => \$o{ops},
+  "format|f=s"    => \$o{format},
+  "pack|p"        => \$o{pack},
+  "stat|s"        => \$o{stat},
+  "threshold|t=i" => \$o{threshold},
+  "help|?"        => \$o{help},
+);
+
+usage() if $o{help};
+
+die "unsupported format: $o{format}" unless $fmt{$o{format}};
+
+# main
+
+my $dir = shift || '.';
+make_path($dir) if $dir ne '.' && !-e $dir;
+
+my %paths = map { ($_, catfile($dir, "$o{name}_$_.txt")) }
+  (qw/base arg stat/, keys %ops);
+
+print "generate bitmaps...\n";
+my %bitmaps = (
+  base => gen_bitmap(@o{qw/width height alpha/}),
+  arg  => gen_bitmap(@o{qw/width height/}, 0),
+);
+
+for my $op (split /,/, $o{ops}) {
+  if ($ops{$op}) {
+    print "process operation: $op\n";
+    $bitmaps{$op} = $ops{$op}->(@bitmaps{qw/base arg/});
+  }
+  else {
+    die "unsupported operation: $op";
+  }
+}
+
+# statistics for base bitmap only
+my %stats = map { $_ => {} } qw/base/;
+
+print "output bitmaps: " . join(', ', sort keys %bitmaps), "\n";
+print_bitmap($bitmaps{$_}, $paths{$_}, $stats{$_}) for keys %bitmaps;
+print "done\n";
+
+if ($o{stat}) {
+  print "output statistics\n";
+  print_stat($stats{base}, $paths{stat});
+  print "done\n";
+}
+
+# subs
+
+sub usage {
+  print <<"HELP";
+NAME
+  $script - generate bitmap for test
+
+SYNOPSIS
+  $script [<options>] [directory]
+
+DESCRIPTION
+  <direcory>: the out put direcory, default as '.'
+
+OPTIONS
+  --width -w (default: @{[$o{width}]})
+    width of the bitmap
+
+  --height -h (default: @{[$o{height}]})
+    height of the bitmap
+
+  --name -n (default: @{[$o{name}]})
+    name of the output file
+
+  --alpha -a (default: @{[$o{alpha}]})
+    alpha value [0 .. 255], random value will be used if the
+    given value is out of the valid range
+
+  --ops -o (default: @{[$o{ops}]})
+    operations applied to the generated bitmap, support multiple ones
+    which joined by ",", e.g. "vflip,hflip", all the supported ones are:
+    [@{[join ", ", sort keys %ops]}]
+
+  --format -f (default: @{[$o{format}]})
+    output format, the supported ones are:
+    [@{[join ", ", sort keys %fmt]}]
+
+  --pack -p (default: @{[$o{pack}]})
+    output the packed value for each pixel, otherwise one byte for each line
+
+  --stat -s (default: @{[$o{stat}]})
+    output the statistics of the bitmaps
+
+  --threshold -t (default: @{[$o{threshold}]})
+    threshold of the pixel value
+
+  --help -?
+    you got it
+HELP
+
+  exit;
+}
+
+sub gen_rand_val { int(rand(0xff + 1)) }
+
+sub gen_one_pixel {
+  my $alpha = shift || 0;
+
+  return {
+    r => gen_rand_val,
+    g => gen_rand_val,
+    b => gen_rand_val,
+    a => $alpha < 0 || $alpha > 0xff ? gen_rand_val : $alpha,
+  };
+}
+
+sub blend_one_pixel {
+  my $b = shift or die;
+  my $a = shift or die;
+  my $c = {a => 0};
+
+  # only use base's alpha
+  my $alpha = $b->{a};
+  for (qw/r g b/) {
+    $c->{$_} = int(($b->{$_} * $alpha + $a->{$_} * (0xff - $alpha)) / 0xff);
+  }
+
+  return $c;
+}
+
+sub gen_bitmap {
+  my $w = shift or die;
+  my $h = shift or die;
+  my $a = shift || 0;
+
+  my @bitmap;
+  for (1 .. $h) {
+    push @bitmap, [map { gen_one_pixel($a) } 1 .. $w];
+  }
+  return \@bitmap;
+}
+
+sub blend_bitmap {
+  my $b = shift or die;
+  my $a = shift or die;
+
+  my $c = [];
+  for my $i (0 .. $#{$b}) {
+    push @$c,
+      [map { blend_one_pixel($b->[$i][$_], $a->[$i][$_]) } 0 .. $#{$b->[$i]}];
+  }
+
+  return $c;
+}
+
+sub vfilp_bitmap {
+  my $b = shift or die;
+
+  my $c = [reverse @$b];
+
+  return $c;
+}
+
+sub hflip_bitmap {
+  my $b = shift or die;
+
+  my $c = [];
+  for my $l (@$b) {
+    push @$c, [reverse @$l];
+  }
+
+  return $c;
+}
+
+sub print_bitmap {
+  my $bitmap = shift or die;
+  my $path   = shift or die;
+  my $stat   = shift;
+
+  my $shader = $fmt{$o{format}} or die;
+  my $pack = $o{pack};
+
+  open my $fh, '>', $path or die;
+  my $oldfh = select $fh;
+  for my $l (@$bitmap) {
+    $shader->($_, $pack, $stat) for @$l;
+  }
+  select $oldfh;
+  close $fh;
+}
+
+sub print_stat {
+  my $stat = shift or die;
+  my $path = shift or die;
+
+  open my $fh, '>', $path or die;
+  my $oldfh = select $fh;
+
+  print "Value_count={";
+  print join(',', map { sprintf '%06x', $stat->{count}{$_} } reverse 0 .. 255);
+  print "}\n";
+
+  print "Value_mask={\n";
+  my $width = 64;
+  my $len   = length $stat->{mask};
+  for (my $i = 0; $i < $len; $i += $width) {
+    print unpack("H*", pack("B$width", substr($stat->{mask}, $i, $width))),
+      "\n";
+  }
+  print "}\n";
+
+  select $oldfh;
+  close $fh;
+}
+
+sub print_pixel {
+  my ($attr, $pixel, $pack, $stat) = @_;
+
+  if ($stat) {
+
+    # only check first channel
+    my $v = $pixel->{$attr->[0]};
+    $stat->{count}{$v}++;
+    $stat->{mask} .= $v > $o{threshold} ? 1 : 0;
+  }
+
+  local $\ = "\n";
+
+  if ($pack) {
+    print sprintf('%02x' x @$attr, @{$pixel}{@$attr});
+  }
+  else {
+    print sprintf('%02x', $_) for @{$pixel}{@$attr};
+  }
+}
+
+sub pixel_to_argb   { print_pixel([qw/a r g b/], @_) }
+sub pixel_to_rgb888 { print_pixel([qw/r g b/],   @_) }
+
+sub pixel_to_rgb565 {
+  my $pixel = shift or die;
+  my $pack  = shift;
+  my $stat  = shift;
+
+  my %p;
+  my ($r, $g, $b) = @{$pixel}{qw/r g b/};
+  $p{h} = ($r >> 3 << 3) | ($g >> 2 >> 3);
+  $p{l} = (($g >> 2 << 2 << 3) & 0xff) | ($b >> 3);
+
+  # update statistics here, do not pass through
+  $stat->{count}{$p{h}}++;
+  $stat->{mask} .= $p{h} > $o{threshold} ? 1 : 0;
+
+  print_pixel([qw/h l/], \%p, $pack);
+}
