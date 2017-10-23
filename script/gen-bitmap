@@ -15,17 +15,22 @@ my %o = (
   name      => 'bitmap',
   alpha     => -1,
   ops       => '',
-  format    => 'rgb888',
+  format    => 'yuv444',
   pack      => 0,
-  stat      => 1,
+  endian    => 'little',
+  bandwidth => 64,
   threshold => 0,
   help      => 0,
 );
+
 my %fmt = (
   argb   => \&pixel_to_argb,
   rgb888 => \&pixel_to_rgb888,
-  rgb565 => \&pixel_to_rgb565,
+  yuv444 => \&pixel_to_yuv444,
+  yuyv   => \&pixel_to_yuyv,
+  uyvy   => \&pixel_to_uyvy,
 );
+
 my %ops = (blend => \&blend_bitmap, vflip => \&vfilp_bitmap,
   hflip => \&hflip_bitmap,);
 
@@ -37,7 +42,8 @@ GetOptions(
   "ops|o=s"       => \$o{ops},
   "format|f=s"    => \$o{format},
   "pack|p"        => \$o{pack},
-  "stat|s"        => \$o{stat},
+  "endian|e=s"    => \$o{endian},
+  "bandwidth|b=i" => \$o{bandwidth},
   "threshold|t=i" => \$o{threshold},
   "help|?"        => \$o{help},
 );
@@ -52,7 +58,7 @@ my $dir = shift || '.';
 make_path($dir) if $dir ne '.' && !-e $dir;
 
 my %paths = map { ($_, catfile($dir, "$o{name}_$_.txt")) }
-  (qw/base arg stat/, keys %ops);
+  (qw/base arg info/, keys %ops);
 
 print "generate bitmaps...\n";
 my %bitmaps = (
@@ -70,18 +76,18 @@ for my $op (split /,/, $o{ops}) {
   }
 }
 
-# statistics for base bitmap only
-my %stats = map { $_ => {} } qw/base/;
+# information for base bitmap only
+my %infos
+  = map { $_ => {name => $_, width => $o{width}, height => $o{height}} }
+  qw/base/;
 
 print "output bitmaps: " . join(', ', sort keys %bitmaps), "\n";
-print_bitmap($bitmaps{$_}, $paths{$_}, $stats{$_}) for keys %bitmaps;
+print_bitmap($bitmaps{$_}, $paths{$_}, $infos{$_}) for keys %bitmaps;
 print "done\n";
 
-if ($o{stat}) {
-  print "output statistics\n";
-  print_stat($stats{base}, $paths{stat});
-  print "done\n";
-}
+print "output information\n";
+print_info($infos{base}, $paths{info});
+print "done\n";
 
 # subs
 
@@ -122,8 +128,12 @@ OPTIONS
   --pack -p (default: @{[$o{pack}]})
     output the packed value for each pixel, otherwise one byte for each line
 
-  --stat -s (default: @{[$o{stat}]})
-    output the statistics of the bitmaps
+  --endian -e (default: @{[$o{endian}]})
+    supported endian are:
+    [little, big]
+
+  --bandwidth -b (default: @{[$o{bandwidth}]})
+    bandwidth of the bus
 
   --threshold -t (default: @{[$o{threshold}]})
     threshold of the pixel value
@@ -209,7 +219,7 @@ sub hflip_bitmap {
 sub print_bitmap {
   my $bitmap = shift or die;
   my $path   = shift or die;
-  my $stat   = shift;
+  my $info   = shift;
 
   my $shader = $fmt{$o{format}} or die;
   my $pack = $o{pack};
@@ -217,29 +227,36 @@ sub print_bitmap {
   open my $fh, '>', $path or die;
   my $oldfh = select $fh;
   for my $l (@$bitmap) {
-    $shader->($_, $pack, $stat) for @$l;
+    $shader->($_, $pack, $info) for @$l;
   }
   select $oldfh;
   close $fh;
 }
 
-sub print_stat {
-  my $stat = shift or die;
+sub print_info {
+  my $info = shift or die;
   my $path = shift or die;
 
   open my $fh, '>', $path or die;
   my $oldfh = select $fh;
 
   print "Value_count={";
-  print join(',', map { sprintf '%06x', $stat->{count}{$_} } reverse 0 .. 255);
+  print join(',', map { sprintf '%06x', $info->{count}{$_} } reverse 0 .. 255);
   print "}\n";
 
   print "Value_mask={\n";
-  my $width = 64;
-  my $len   = length $stat->{mask};
-  for (my $i = 0; $i < $len; $i += $width) {
-    print unpack("H*", pack("B$width", substr($stat->{mask}, $i, $width))),
-      "\n";
+  my $bw = $o{bandwidth};
+  my $w  = $info->{width};
+  my $m  = $info->{mask};
+  my $f  = "B$bw";
+  my $b  = '0' x $bw;
+  for (my $i = 0; $i < length $m; $i += $w) {
+    my $line = substr($info->{mask}, $i, $w);
+    for (my $j = 0; $j < $w; $j += $bw) {
+      my $shot = substr($line . $b, $j, $bw);
+      $shot = reverse $shot if $o{endian} eq 'little';
+      print unpack("H*", pack($f, $shot)), "\n";
+    }
   }
   print "}\n";
 
@@ -248,14 +265,15 @@ sub print_stat {
 }
 
 sub print_pixel {
-  my ($attr, $pixel, $pack, $stat) = @_;
+  my ($attr, $pixel, $pack, $info) = @_;
 
-  if ($stat) {
+  if ($info) {
 
-    # only check first channel
-    my $v = $pixel->{$attr->[0]};
-    $stat->{count}{$v}++;
-    $stat->{mask} .= $v > $o{threshold} ? 1 : 0;
+    # only check luma channel
+    if (defined(my $v = $pixel->{y})) {
+      $info->{count}{$v}++;
+      $info->{mask} .= $v > $o{threshold} ? 1 : 0;
+    }
   }
 
   local $\ = "\n";
@@ -271,19 +289,23 @@ sub print_pixel {
 sub pixel_to_argb   { print_pixel([qw/a r g b/], @_) }
 sub pixel_to_rgb888 { print_pixel([qw/r g b/],   @_) }
 
-sub pixel_to_rgb565 {
-  my $pixel = shift or die;
-  my $pack  = shift;
-  my $stat  = shift;
+sub pixel_to_yuv444 {
+  print_pixel([qw/y u v/], rgb2yuv(shift), @_);
+}
 
-  my %p;
-  my ($r, $g, $b) = @{$pixel}{qw/r g b/};
-  $p{h} = ($r >> 3 << 3) | ($g >> 2 >> 3);
-  $p{l} = (($g >> 2 << 2 << 3) & 0xff) | ($b >> 3);
+sub pixel_to_yuyv {
+  print_pixel([qw/y u/], rgb2yuv(shift), @_);
+}
 
-  # update statistics here, do not pass through
-  $stat->{count}{$p{h}}++;
-  $stat->{mask} .= $p{h} > $o{threshold} ? 1 : 0;
+sub pixel_to_uyvy {
+  print_pixel([qw/u y/], rgb2yuv(shift), @_);
+}
 
-  print_pixel([qw/h l/], \%p, $pack);
+sub rgb2yuv {
+  my ($r, $g, $b) = @{$_[0]}{qw/r g b/};
+  return {
+    y => 0xff & (((66 * $r + 129 * $g + 25 * $b + 128) >> 8) + 16),
+    u => 0xff & (((-38 * $r - 74 * $g + 112 * $b + 128) >> 8) + 128),
+    v => 0xff & (((112 * $r - 94 * $g - 18 * $b + 128) >> 8) + 128),
+  };
 }
