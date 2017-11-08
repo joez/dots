@@ -7,6 +7,8 @@ use File::Basename qw/basename/;
 use File::Path qw/make_path/;
 use File::Spec::Functions qw/catfile/;
 
+use constant DEBUG => 0;
+
 my $script = basename(__FILE__);
 
 my %o = (
@@ -17,9 +19,9 @@ my %o = (
   ops       => '',
   format    => 'yuv444',
   pack      => 0,
-  endian    => 'little',
+  load      => 'right',
   bandwidth => 64,
-  threshold => 0,
+  threshold => 128,
   help      => 0,
 );
 
@@ -42,7 +44,7 @@ GetOptions(
   "ops|o=s"       => \$o{ops},
   "format|f=s"    => \$o{format},
   "pack|p"        => \$o{pack},
-  "endian|e=s"    => \$o{endian},
+  "load|l=s"      => \$o{load},
   "bandwidth|b=i" => \$o{bandwidth},
   "threshold|t=i" => \$o{threshold},
   "help|?"        => \$o{help},
@@ -128,9 +130,9 @@ OPTIONS
   --pack -p (default: @{[$o{pack}]})
     output the packed value for each pixel, otherwise one byte for each line
 
-  --endian -e (default: @{[$o{endian}]})
-    supported endian are:
-    [little, big]
+  --load -l (default: @{[$o{load}]})
+    supported load direction are:
+    [left, right]
 
   --bandwidth -b (default: @{[$o{bandwidth}]})
     bandwidth of the bus
@@ -233,6 +235,42 @@ sub print_bitmap {
   close $fh;
 }
 
+sub get_shift_op {
+  my $left = shift;
+  if ($left) {
+    return sub {
+      shift @{$_[0]};
+      push @{$_[0]}, $_[1];
+    };
+  }
+  else {
+    return sub {
+      pop @{$_[0]};
+      unshift @{$_[0]}, $_[1];
+    };
+  }
+}
+
+sub load_data {
+  my $list = shift or die;
+  my $size = shift || 64;
+  my $left = shift;         # shift left or not
+  my $dval = shift;         # default value
+
+  # default values
+  $left = 1 unless defined $left;
+  $dval = 0 unless defined $dval;
+
+  $list = [@{$list}[0 .. $size]] if @$list > $size;
+
+  my @result = ($dval) x $size;
+  my $op     = get_shift_op($left);
+
+  $op->(\@result, $_) for @$list;
+
+  return \@result;
+}
+
 sub print_info {
   my $info = shift or die;
   my $path = shift or die;
@@ -240,22 +278,47 @@ sub print_info {
   open my $fh, '>', $path or die;
   my $oldfh = select $fh;
 
-  print "Value_count={";
-  print join(',', map { sprintf '%06x', $info->{count}{$_} } reverse 0 .. 255);
+  print "WORD qr_calc_counter[256]={\n";
+  print
+    join(",\n", map { sprintf '%06x', $info->{count}{$_} } reverse 0 .. 255);
+  print "\n}\n";
+
+  my $left = $o{load} eq 'left';
+  my $bw   = $o{bandwidth};
+  my $w    = $info->{width};
+
+  my $mask = $info->{mask};
+  print "\nmask={\n";
+  for (my $i = 0; $i < length $mask; $i += $w) {
+    my $line = substr($mask, $i, $w);
+    for (my $j = 0; $j < $w; $j += $bw) {
+      my $shot = substr $line, $j, $bw;
+
+      if (DEBUG) {
+        print "[DEBUG] input  bin: $shot\n";
+      }
+      $shot = join '', @{load_data([split(//, $shot)], $bw, $left)};
+      if (DEBUG) {
+        print "[DEBUG] output bin: $shot\n";
+      }
+
+      print unpack("H*", pack("B$bw", $shot)), "\n";
+    }
+  }
   print "}\n";
 
-  print "Value_mask={\n";
-  my $bw = $o{bandwidth};
-  my $w  = $info->{width};
-  my $m  = $info->{mask};
-  my $f  = "B$bw";
-  my $b  = '0' x $bw;
-  for (my $i = 0; $i < length $m; $i += $w) {
-    my $line = substr($info->{mask}, $i, $w);
-    for (my $j = 0; $j < $w; $j += $bw) {
-      my $shot = substr($line . $b, $j, $bw);
-      $shot = reverse $shot if $o{endian} eq 'little';
-      print unpack("H*", pack($f, $shot)), "\n";
+  my @list = @{$info->{luma}};
+  my $size = $o{bandwidth} / 8;
+  print "\nluma={\n";
+  while (my @l = splice @list, 0, $w) {
+    while (my @p = splice @l, 0, $size) {
+      if (DEBUG) {
+        my $s = join '', map { sprintf '%02x', $_ } @p;
+        print "[DEBUG] input  hex: $s\n";
+      }
+      my $d = load_data(\@p, $size, $left);
+
+      print join('', map { sprintf '%02x', $_ } @$d), "\n";
     }
   }
   print "}\n";
@@ -271,6 +334,7 @@ sub print_pixel {
 
     # only check luma channel
     if (defined(my $v = $pixel->{y})) {
+      push @{$info->{luma}}, $v;
       $info->{count}{$v}++;
       $info->{mask} .= $v > $o{threshold} ? 1 : 0;
     }
