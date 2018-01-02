@@ -1,0 +1,146 @@
+#!/usr/bin/env perl
+
+use strict;
+
+use Getopt::Long;
+use File::Basename qw/basename fileparse/;
+use File::Path qw/make_path/;
+use File::Spec::Functions qw/catfile/;
+
+my $script = basename(__FILE__);
+
+my %o = (width => 1280, height => 720, name => '%n', out => 'out', help => 0,);
+
+my %fmt = (jpg => qr/\.jpe?g/i, png => qr/\.png/i,);
+
+GetOptions(
+  "width|w=i"  => \$o{width},
+  "height|h=i" => \$o{height},
+  "name|n=s"   => \$o{name},
+  "out|o=s"    => \$o{out},
+  "help|?"     => \$o{help},
+) or usage();
+
+usage() if $o{help};
+
+# subs
+
+sub usage {
+  print <<"HELP";
+NAME
+  $script - resize the images
+
+SYNOPSIS
+  $script [<options>] [dir]
+
+DESCRIPTION
+  Resize the images under the target folder to the specified size only if the
+  original size is bigger than the target one
+
+  You should have ImageMagick been installed on your system
+
+  Only the following image formats are supported:
+  [@{[join(', ', sort keys %fmt)]}]
+
+  <dir>: the folder of the images, default: '.'
+
+OPTIONS
+  --width -w (default: @{[$o{width}]})
+    width of the output images
+
+  --height -h (default: @{[$o{height}]})
+    height of the output images
+
+  --name -n (default: @{[$o{name}]})
+    the name pattern of the output images
+    \%n: base name of the image
+    \%c: the count number
+
+  --out -o (default: @{[$o{out}]})
+    the output folder
+
+  --help -?
+    you got it
+
+EXAMPLES
+  \$ $script -n resized_%c -w 640 -h 480 -o resized .
+  resize the images at the current folder to the size 640x480 if they are
+  larger than that, and stored the result into the folder "resized"
+
+HELP
+
+  exit;
+}
+
+sub get_size {
+  return (split ' ', `identify -format '%w %h' $_[0]`);
+}
+
+sub resize {
+  my $src = shift or die;
+  my $dst = shift or die;
+  my $w   = shift or die;
+  my $h   = shift or die;
+
+  my $cmd
+    = qq/convert $src -resize '${w}x${h}^>' -gravity Center -crop ${w}x${h}+0+0 +repage $dst/;
+
+  return system($cmd) == 0;
+}
+
+# main
+
+my $dir = shift || '.';
+
+print qq/resize images under $dir to $o{out}:\n/;
+
+make_path($o{out}) unless -e $o{out};
+
+my @files = sort glob(catfile($dir, '*'));
+
+my $cn;
+my $cw = length('' . scalar @files);
+$cw = 4 if $cw < 4;
+
+for my $src (@files) {
+  next if -d $src;
+
+  # skip unknown image format
+  my ($base, $dir, $ext) = fileparse($src, values %fmt);
+  next unless $ext;
+
+  # unified to lower case
+  $ext = lc $ext;
+
+  my ($sw, $sh) = get_size($src);
+  my ($tw, $th) = @o{qw/width height/};
+
+  # swap the width and height if the original one is portrait
+  if ($sw < $sh) {
+    ($tw, $th) = ($th, $tw);
+  }
+
+  # figure out the target file name
+  my $tn = $o{name};
+  for ($tn) {
+    my $c = sprintf("%0${cw}d", $cn);
+    s/%n/$base/;
+    s/%c/$c/;
+  }
+  my $dst = catfile($o{out}, "$tn$ext");
+
+  print qq/$src ($sw,$sh) -> $dst ($tw,$th) ... /;
+  if (resize($src, $dst, $tw, $th)) {
+
+    # check the real size
+    my ($w, $h) = get_size($dst);
+    print qq/done ($w,$h)\n/;
+    $cn++;
+  }
+  else {
+    print qq/fail\n/;
+
+    # give CTRL+C a change
+    sleep 1;
+  }
+}
