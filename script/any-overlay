@@ -1,0 +1,482 @@
+#!/usr/bin/env perl
+# author: joe.zheng
+
+use FindBin;
+use lib "$FindBin::RealBin/../lib";
+
+use strict;
+use File::Find;
+use File::Spec::Functions qw/catdir catfile abs2rel/;
+use File::Path qw/make_path remove_tree/;
+use File::Basename qw/fileparse basename/;
+use File::Compare;
+use Fcntl ':mode';
+use Storable qw/nstore retrieve/;
+
+use Getopt::Long;
+
+
+my %hdl = (
+  help => \&do_help,
+  init => \&do_init,
+  done => \&do_done,
+  stat => \&do_stat,
+  diff => \&do_diff,
+  push => \&do_push,
+  pop  => \&do_pop,
+);
+
+my %opt = (
+  root => '.',
+  over => 'overlay',
+
+  back => '.back',
+  meta => '.meta',
+  data => 'data',
+);
+
+my %st = (init => 'init', done => 'done',);
+
+my $meta = {};
+
+# common subs
+sub dbg { print STDERR join("\n", @_) . "\n" }
+sub msg { print STDOUT join("\n", @_) . "\n" }
+sub fail { msg @_; exit 1 }
+
+sub dir {
+  exists $meta->{$_[0]} ? $meta->{$_[0]} : catdir($meta->{root}, $_[0]);
+}
+
+# main
+my $script = basename($0);
+my $help;
+GetOptions("help|h" => \$help,);
+if ($help) {
+  do_help();
+  exit;
+}
+
+my $cmd = shift || 'help';
+$opt{root} = shift if $ARGV[0];
+
+if (exists $hdl{$cmd}) {
+  $meta = load_meta();
+  $opt{over} = shift if ($cmd eq 'init' and $ARGV[0]);
+
+  $hdl{$cmd}->(@ARGV);
+}
+else {
+  msg 'unsupported command';
+}
+
+# subs
+sub do_help {
+  print <<"EOF";
+NAME
+    $script - Overlay any files
+
+SYNOPSIS
+    $script init [<root>] [<overlay>...]
+    $script done [<root>]
+    $script stat [<root>]
+    $script diff [<root>]
+
+    $script push <root> <overlay>...
+    $script pop  [<root>]
+
+    $script help
+
+DESCRIPTION
+    Inspired by Android resource overlay, support any files to be overlaid,
+    which can support code customization easily
+
+    * The customized code stored in the OVERLAY
+    * Apply the OVERLAY by moving the BASE ones affected to the BACKUP,
+      and link the BASE ones to the OVERLAY
+    * Work in the BASE
+    * Revert the OVERLAY by restoring the BACKUP files to BASE
+    * Commit changeset in OVERLAY
+
+COMMAND
+    init    apply the overlay, and kickoff the workflow
+    done    revert the overlay, and complete the workflow
+    stat    check current status
+    diff    report the changeset need to be synchronized to overlay
+    push    add new overlays and apply them
+    pop     revert the current overlay
+    help    get help
+
+OPTIONS
+    <root>    the root directory of the code base, default "."
+    <overlay> the overlay directory, default "overlay"
+
+EXAMPLES
+    1. $script init . overlay
+       start work with BASE directory at ".", and OVERLAY at "overlay"
+
+    2. $script stat
+       check current status
+
+    3. $script diff
+       check if there is some difference between BASE and OVERLAY
+
+    4. $script done
+       eliminate the OVERLAY and finish the workflow
+
+NOTES
+    * OVERLAY and BASE should be always synchronized after you applied
+      the OVERLAY, because the files link to the same ones, but you can
+      break this via:
+      1. Overwrite file in BASE which is overlaid via copy or git reset
+      2. Add new files in OVERLAY after you apply the OVERLAY
+
+      You can synchronize manually by your favorite merge tool
+
+    * Multiple overlays are supported but not suggested, because it will
+      make things complicated, do it on your own risk
+
+SEE ALSO
+
+EOF
+
+}
+
+sub do_init {
+  my $root = $opt{root};
+  my $over = $opt{over};
+
+  msg 'do init';
+  unless (inited()) {
+    fail "overlay directory $over doesn't exist" unless -e $over;
+
+    # ensure the top directory for backup data
+    make_path(dir('data'));
+    push_overlay($over);
+    mark_skip();
+
+    # the other overlays
+    push_overlay($_) for @_;
+  }
+  else {
+    fail 'already initialized, call "done" command first';
+  }
+}
+
+sub do_push {
+  msg 'do push';
+
+  if (inited()) {
+    push_overlay($_) for @_;
+  }
+  else {
+    fail 'not initialized, call "init" command first';
+  }
+}
+
+sub do_pop {
+  msg 'do pop';
+
+  if (inited()) {
+    my $over = $meta->{over}[0];
+
+    if ($over) {
+      if (check_diff($over)) {
+        fail 'not sync with overlay, call "diff" command for detail';
+      }
+      else {
+        pop_overlay();
+      }
+    }
+    else {
+      fail 'no any overlay left, call "done" command instead';
+    }
+  }
+  else {
+    fail 'not initialized, call "init" command first';
+  }
+}
+
+sub do_done {
+  my $root = dir('root');
+
+  msg 'do done';
+  if (inited()) {
+    if (check_diff()) {
+      fail 'not sync with overlay, call "diff" command for detail';
+      return;
+    }
+
+    revert_overlay();
+
+    # remove all in backup
+    remove_tree(dir('back'));
+  }
+  else {
+    msg 'already done';
+  }
+}
+
+sub do_stat {
+  msg 'do stat';
+  msg 'status: ' . (inited() ? 'initialized' : 'uninitialized');
+  msg 'overlay (current first):';
+  msg '  ' . $_ . " => " . $meta->{seen}{$_} for @{$meta->{over}};
+}
+
+sub do_diff {
+  msg 'do diff';
+
+  my ($is_diff, $diffs) = check_diff();
+  if ($is_diff) {
+    for my $k (sort keys %{$diffs}) {
+      my $c = @{$diffs->{$k}};
+      next if $c < 1;
+      msg "<$k count=$c>";
+      msg $_->[0] . ' <= ' . $_->[1] for @{$diffs->{$k}};
+      msg "</$k>";
+    }
+  }
+  else {
+    msg 'same';
+  }
+}
+
+sub load_meta {
+  my $meta = {root => $opt{root}, over => [],};
+  $meta->{back} = catdir($meta->{root}, $opt{back});
+  $meta->{meta} = catdir($meta->{back}, $opt{meta});
+  $meta->{data} = catdir($meta->{back}, $opt{data});
+
+  my $path = $meta->{meta};
+  if (-e $path) {
+    my $m = retrieve($path);
+
+    # need not these, use the updated ones based on new $opt{root}
+    delete @{$m}{qw/root back meta data/};
+
+    @{$meta}{keys %$m} = values %$m;
+  }
+
+  return $meta;
+}
+
+sub save_meta {
+  my $meta = shift or die;
+  my $path = shift or die;
+
+  nstore($meta, $path);
+}
+
+
+sub apply_overlay {
+  dbg "apply_overlay";
+
+  gen_process_sub(
+    sub {
+      my ($mode, $base, $back, $over) = @{+shift}{qw/mode base back over/};
+
+      if (S_ISDIR($mode)) {
+
+        # we can not link directory with hard link
+        # so create a new one preserving file mode
+        if (-e $base) {
+          mkdir $back;
+          chmod +(lstat $base)[2] & 07777, $back;
+        }
+        else {
+          # no need to backup
+          mkdir $base;
+        }
+        chmod $mode & 07777, $base;
+      }
+      else {
+        rename $base, $back if -e $base;
+        link $over, $base;
+      }
+    },
+    @_
+  )->();
+}
+
+sub revert_overlay {
+  dbg "revert_overlay";
+
+  gen_process_sub(
+    sub {
+      my ($mode, $base, $back, $over) = @{+shift}{qw/mode base back over/};
+
+      if (S_ISDIR($mode)) {
+        if (-e $back) {
+
+          # we can not link directory with hard link
+          # so create a new one preserving file mode
+          mkdir($base) unless -e $base;
+          chmod +(lstat $back)[2] & 07777, $base;
+        }
+      }
+      else {
+        unlink $base if -e $base;
+        rename $back, $base if -e $back;
+      }
+    },
+    @_
+  )->();
+}
+
+sub push_overlay {
+  my $over = shift or die;
+
+  dbg "push overlay: $over";
+  if (-e $over && !exists $meta->{seen}{$over}) {
+    my $data = catdir(dir('data'), scalar @{$meta->{over}});
+    unshift @{$meta->{over}}, $over;
+    $meta->{seen}{$over} = $data;
+
+    apply_overlay($over);
+
+    save_meta($meta, $meta->{meta});
+  }
+  else {
+    dbg "skip overlay $over";
+  }
+
+  return wantarray ? ($over, $meta->{seen}{$over}) : $over;
+}
+
+sub pop_overlay {
+  my $over = shift @{$meta->{over}};
+  revert_overlay($over);
+
+  dbg "pop_overlay: $over";
+  my $data = delete $meta->{seen}{$over};
+  save_meta($meta, $meta->{meta});
+
+  return wantarray ? ($over, $data) : $over;
+}
+
+sub inited { -e dir('meta') }
+
+sub check_diff {
+  dbg 'check_diff';
+
+  # ensure every overlay path is accessable
+  for my $p (@{$meta->{over}}) {
+    fail "can't access overlay path: $p" unless -e $p;
+  }
+
+  my %diffs = (mod => [], del => []);
+  my %seen;
+
+  gen_process_sub(
+    sub {
+      my ($mode, $base, $back, $over) = @{+shift}{qw/mode base back over/};
+
+      unless ($seen{$base}++) {
+
+        unless (same_files($over, $base)) {
+          dbg "different: base($base), over($over)";
+          push @{$diffs{-e $base ? 'mod' : 'del'}}, [$base, $over];
+        }
+      }
+    },
+    @_
+  )->();
+
+  my $is_diff = @{$diffs{mod}} + @{$diffs{del}} > 0 ? 1 : 0;
+  return wantarray ? ($is_diff, \%diffs) : $is_diff;
+}
+
+sub same_files {
+  my ($a, $b) = @_;
+
+  # both are symbolic link
+  return readlink $a eq readlink $b if -l $a && -l $b;
+
+  # one of which is missing
+  return 0 if -e $a != -e $b;
+
+  # stat the link instead of the referent
+  my ($ainode, $amode, $asize) = (stat($a))[1, 2, 7];
+  my ($binode, $bmode, $bsize) = (stat($b))[1, 2, 7];
+
+  # link the same inode
+  return 1 if $ainode == $binode;
+
+  # both are directory they are the same
+  return 1 if S_ISDIR($amode);
+
+  # different mode
+  return 0 if $amode != $bmode;
+
+  # difference size
+  return 0 if $asize != $bsize;
+
+  # at last
+  return compare($a, $b) == 0 ? 1 : 0;
+}
+
+sub gen_process_sub {
+  my $process = shift or die;
+  my $overlay = $_[0] ? \@_ : $meta->{over};
+
+  my $re_dots = qr/^\.{1,2}$/o;
+  my $re_skip = qr/^\.(?:\w+)$/o;    # skip hidden directory
+
+  return sub {
+    my $root = dir('root');
+
+    for my $over (@$overlay) {
+      next unless $over;
+
+      dbg "processing overlay: $over";
+      my $back = $meta->{seen}{$over};
+      die "invalid overlay: $over!" unless $back;
+
+      make_path($back) unless -e $back;
+
+      find(
+        {
+          wanted => sub {
+            my $bname = fileparse($_);
+            next if $bname =~ $re_dots;
+
+            my $mode = (lstat)[2];
+
+            if (-d _ && $bname =~ $re_skip) {
+              $File::Find::prune = 1;
+            }
+            elsif (-f _ || -l _ || -d _) {
+              my $file_over = $File::Find::name;
+              my $rel_file  = abs2rel($file_over, $over);
+              my $file_base = catfile($root, $rel_file);
+              my $file_back = catfile($back, $rel_file);
+              $process->(
+                {
+                  mode => $mode,
+                  over => $file_over,
+                  base => $file_base,
+                  back => $file_back,
+                }
+              );
+            }
+          },
+          no_chdir => 1
+        },
+        $over
+      );
+    }
+  };
+}
+
+sub mark_skip {
+  my $back = dir('back');
+  make_path($back) unless -e $back;
+
+  # dummy files to let Android Build System skip sub-directories
+  for (qw/CleanSpec.mk Android.mk/) {
+    my $p = catfile($back, $_);
+    open my $fh, '>', $p or die;
+    close $fh;
+  }
+}
