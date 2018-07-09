@@ -10,7 +10,8 @@ SIZE="1G"
 SOURCE="/local/work"
 TARGET="/local/ramdisk"
 
-CONFIG_ROOT="/local/.ramd"
+# you should not change it
+CONFIG_ROOT="$HOME/.ramdisk"
 
 
 function usage() {
@@ -20,10 +21,10 @@ function usage() {
 Usage: $self <command> [<options>] [<args>]
   setup a ramdisk as a super fast storage for a workspace
 
-  CAUTION: need "root" permission to run it
+  CAUTION: need "root" permission to operate ramdisk
 
 Commands:
-  setup [-n] [-s size] [<source>] [<target>]
+  mount [-n] [-s size] [<source>] [<target>]
     setup a ramdisk and sync workspace to it if necessary
 
     -n:         do not sync the workspace with the target ramdisk
@@ -31,7 +32,7 @@ Commands:
     <source>:   workspace to be put into the ramdisk, default $SOURCE
     <target>:   ramdisk mount point path, default $TARGET
 
-  close [-n] [<target>]
+  umount [-n] [<target>]
     sync ramdisk with workspace if necessary and close it
 
     -n:         do not sync the workspace with the target ramdisk
@@ -46,14 +47,14 @@ Commands:
     print the usage message
 
 Examples:
-  $self open /local/work /local/ramdisk
-    setup a ramdisk at local/ramdisk and sync content from /local/work
+  $self mount $SOURCE $TARGET
+    setup a ramdisk at $TARGET and sync content from $SOURCE
 
-  $self info /local/ramdisk
-    check the information about the ramdisk mounted at /local/ramdisk
+  $self info $TARGET
+    check the information about the ramdisk mounted at $TARGET
 
-  $self close /local/ramdisk
-    sync content from /local/ramdisk to the original workspace and close it
+  $self umount $TARGET
+    sync content from $TARGET to the original workspace and close it
 EOF
 
 }
@@ -62,7 +63,7 @@ function absdir() {
   (cd $1 2>/dev/null && PWD= /bin/pwd)
 }
 
-function ensuredir() {
+function ensure_dir() {
   if [ ! -e "$1" ]; then
     mkdir -p "$1"
     if [ $? -ne 0 ]; then
@@ -71,25 +72,42 @@ function ensuredir() {
   fi
 }
 
-function configfile() {
+function ensure_sudo () {
+  echo "SUDO permission is required to operate the ramdisk"
+  echo "let's check it first, your credential may be requried"
+
+  if sudo -v; then
+    echo "ok"
+  else
+    echo "failed"
+    exit 1
+  fi
+}
+
+function setup_config () {
+  ensure_dir $CONFIG_ROOT
+  CONFIG_ROOT=$(absdir $CONFIG_ROOT)
+}
+
+function config_file() {
   local target=$(absdir $TARGET)
-  if [ -n "$target" ]; then 
-    echo "$CONFIG_ROOT${target}.cfg"
+  if [ -n "$target" ]; then
+    echo "$CONFIG_ROOT${target}source"
   else
     echo ""
   fi
 }
 
-function saveconfig() {
-  local path=$(configfile)
+function save_config() {
+  local path=$(config_file)
   if [ -n "$path" ]; then
-    ensuredir $(dirname $path)
+    ensure_dir $(dirname $path)
     echo $SOURCE > $path
   fi
 }
 
-function loadconfig() {
-  local path=$(configfile)
+function load_config() {
+  local path=$(config_file)
   if [ -n "$path" ] && [ -e "$path" ]; then
     local val=`cat $path`
     if [ -n "$val" ]; then
@@ -118,14 +136,13 @@ done
 
 shift $((OPTIND-1))
 
-# setup the configuration file
-ensuredir $CONFIG_ROOT
-CONFIG_ROOT=$(absdir $CONFIG_ROOT)
+# setup configuration folder
+setup_config
 
 # handle the command
 if [ "$COMMAND" = "help" ]; then
   usage && exit
-elif [ "$COMMAND" = "status" ]; then
+elif [ "$COMMAND" = "info" ]; then
   if [ -n "$1" ]; then
     if [ -e "$1" ]; then
       TARGET=$(absdir $1)
@@ -133,7 +150,7 @@ elif [ "$COMMAND" = "status" ]; then
       echo "$1 does not exist"
     fi
   fi
-  loadconfig
+  load_config
 
   out=`df -h -t 'tmpfs' $TARGET 2>/dev/null`
   if [ $? -ne 0 ]; then
@@ -145,18 +162,18 @@ elif [ "$COMMAND" = "status" ]; then
     echo ""
     echo "$out"
   fi
-elif [ "$COMMAND" = "setup" ]; then
+elif [ "$COMMAND" = "mount" ]; then
   if [ -n "$2" ]; then
     TARGET=$2
   fi
-  ensuredir $TARGET
+  ensure_dir $TARGET
   TARGET=$(absdir $TARGET)
-  loadconfig
+  load_config
 
   if [ -n "$1" ]; then
     SOURCE=$1
   fi
-  ensuredir $SOURCE
+  ensure_dir $SOURCE
   SOURCE=$(absdir $SOURCE)
 
   # check if there is already one
@@ -167,43 +184,48 @@ elif [ "$COMMAND" = "setup" ]; then
     exit 1
   fi
 
+  ensure_sudo
+
   echo "start to create a ramdisk ($SIZE) at $TARGET for workspace $SOURCE"
-  mount -t tmpfs -o size=$SIZE tmpfs $TARGET
+  sudo mount -t tmpfs -o size=$SIZE,uid=$(id -u),gid=$(id -g) tmpfs $TARGET
   if [ $? -ne 0 ]; then
-    echo "create ramdisk failed"
+    echo "failed"
     exit 1
   else
-    echo "ramdisk created"
-    saveconfig
+    echo "done"
+    save_config
   fi
 
   if [ "$SYNC" = "y" ]; then
     echo "start to sync content from $SOURCE to $TARGET"
     echo "wait for a moment..."
-    rsync -aP $SOURCE/ $TARGET
+    rsync -a $SOURCE/ $TARGET
+    echo "done"
   fi
-  
-elif [ "$COMMAND" = "close" ]; then
+elif [ "$COMMAND" = "umount" ]; then
   if [ -n "$1" ]; then
     TARGET=$1
   fi
-  ensuredir $TARGET
+  ensure_dir $TARGET
   TARGET=$(absdir $TARGET)
-  loadconfig
+  load_config
 
   if [ "$SYNC" = "y" ]; then
     echo "start to sync content from $TARGET to $SOURCE"
     echo "wait for a moment..."
-    rsync -auP $SOURCE/ $TARGET
+    rsync -au $SOURCE/ $TARGET
+    echo "done"
   fi
 
+  ensure_sudo
+
   echo "now close the ramdisk at $TARGET"
-  umount $TARGET
+  sudo umount $TARGET
   if [ $? -ne 0 ]; then
-    echo "close failed"
+    echo "failed"
     exit 1
   else
-    echo "close done"
+    echo "done"
   fi
 else
   echo "unsupported command!"
