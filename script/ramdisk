@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
 # author:  joez
-# version: v0.1
 # date:    2018.07.04
 
 COMMAND="help"
@@ -12,7 +11,7 @@ TARGET="/local/ramdisk"
 
 # you should not change it
 CONFIG_ROOT="$HOME/.ramdisk"
-
+VERSION="v0.2"
 
 function usage() {
   local self=`basename $0`
@@ -21,7 +20,9 @@ function usage() {
 Usage: $self <command> [<options>] [<args>]
   setup a ramdisk as a super fast storage for a workspace
 
-  CAUTION: need "root" permission to operate ramdisk
+  version: $VERSION
+
+  CAUTION: need sudo permission to operate a ramdisk
 
 Commands:
   mount [-n] [-s size] [<source>] [<target>]
