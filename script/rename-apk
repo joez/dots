@@ -1,0 +1,214 @@
+#!/usr/bin/env perl
+# author: joe.zheng
+
+use strict;
+use File::Find;
+use File::Spec::Functions qw/catfile abs2rel/;
+use File::Path qw/make_path/;
+use File::Basename qw/fileparse basename dirname/;
+use Data::Dumper;
+use Getopt::Long;
+
+my %opt = (index => 'index.txt', help => 0,);
+
+# main
+my $script = basename($0);
+GetOptions("help|h" => \$opt{help}, "index|i=s" => \$opt{index});
+if ($opt{help} || $#ARGV < 1) {
+  print_help();
+  exit;
+}
+else {
+  main(@ARGV);
+}
+
+# subs
+sub print_help {
+  print <<"EOF";
+NAME
+    $script - Unify the APK file name
+
+SYNOPSIS
+    $script [-h] [-i] <file or dir>...
+
+DESCRIPTION
+    Check the APK information by 'aapt' and unify the file name with
+    the format as '<package>-<version>.apk', and output a index file
+    to store all the information, such as package name, version, etc.
+
+OPTIONS
+    -i, --index:   the index file, default is 'index.txt'
+    -h, --help:    print the current help message
+
+EXAMPLES
+    1. $script .
+       rename all the APK files under '.' and output 'index.txt'
+
+    2. $script -i app-index.txt app/ *.apk
+       rename all *.apk and the APK files under 'app/' and output index
+       information to 'app-index.txt'
+
+EOF
+
+}
+
+my $_D = Data::Dumper->new([])->Terse(1)->Deepcopy(1)->Indent(0)->Pair(':');
+sub str { $_D->Values(\@_)->Dump }
+
+sub dbg { print STDERR join("\n", @_) . "\n" }
+sub msg { print STDOUT join("\n", @_) . "\n" }
+sub err { msg @_; exit 1 }
+
+sub main {
+  msg 'start';
+
+  my %db = ();
+  my %seen;
+  my $cb = sub {
+    my $src = abs2rel(shift);
+    my $dir = shift;
+
+    msg "found apk: $src";
+
+    my $info = get_apk_info($src);
+    my $name = join('-', @{$info}{qw/package version/}) . '.apk';
+    if ($seen{$name}) {
+      msg "duplicated $name, already found $seen{$name}, skip";
+      return;
+    }
+
+    my $dst = abs2rel(catfile($dir, $name));
+    if ($src eq $dst) {
+      msg "no need to rename";
+    }
+    else {
+      if (rename($src, $dst)) {
+        msg "renamed to $dst";
+      }
+      else {
+        msg "fail to rename, skip";
+        return;
+      }
+    }
+    $db{$name}   = $info;
+    $seen{$name} = $dst;
+  };
+
+  if (my $v = get_aapt_version()) {
+    msg "found aapt $v";
+
+    find_apk($cb, @_);
+    save_index(\%db, $opt{index});
+  }
+  else {
+      err "no aapt found, stop";
+  }
+
+  msg 'done';
+}
+
+sub save_index {
+  my $data = shift or die;
+  my $path = shift or die;
+
+  msg "save index to $path";
+
+  my $dir = dirname($path);
+  make_path($dir) unless -e $dir;
+
+  my $dumper
+    = Data::Dumper->new([])->Terse(1)->Deepcopy(1)->Indent(1)->Pair(':')
+    ->Sortkeys(1);
+  open my $fh, '>', $path or die;
+  print $fh $dumper->Values([$data])->Dump;
+  close $fh;
+}
+
+sub trim {
+  my $str = shift;
+  $str =~ s/^\s+//;
+  $str =~ s/\s+$//;
+  return $str;
+}
+
+sub unquote { $_[0] =~ /^'(.*)'$/ ? $1 : $_[0] }
+
+sub clean { unquote(trim($_[0])) }
+
+sub get_aapt_version {
+  for (scalar `aapt v`) {
+    chomp;
+    if (/^Android Asset Packaging Tool,\s*(.+)$/) {
+      return trim($1);
+    }
+  }
+  return;
+}
+
+sub get_apk_info {
+  my $path = shift or die;
+  my %info;
+
+  for (`aapt d badging $path`) {
+    chomp;
+
+    if (/^application:\s*label='([^']+)'/) {
+      $info{title} = clean($1);
+    }
+    elsif (/^application-label(?:-en)?(?:-US)?:\s*(.+)$/) {
+      $info{title} = clean($1) unless $info{title};
+    }
+    elsif (/^package:\s*(.+)$/) {
+      for (split /\s+/, $1) {
+        if (/^name=(.+)$/) {
+          $info{package} = clean($1);
+        }
+        elsif (/^versionName=(.+)$/) {
+          $info{version} = clean($1);
+        }
+      }
+    }
+    elsif (/^launchable-activity:\s*(.+)$/) {
+      for (split /\s+/, $1) {
+        if (/^name=(.+)$/) {
+          push @{$info{launchable}}, clean($1);
+          last;    # enough for us to get one
+        }
+      }
+    }
+  }
+
+  return \%info;
+}
+
+sub find_apk {
+  my $process = shift or die;
+
+  my $re_dots = qr/^\.{1,2}$/o;
+  my $re_skip = qr/^\.(?:\w+)$/o;
+  my $re_apk  = qr/\.apk$/oi;
+
+  my $wanted = sub {
+    my $name = fileparse($_);
+    next if $name =~ $re_dots;
+
+    if (-d $_ && $name =~ $re_skip) {
+      $File::Find::prune = 1;
+    }
+    elsif (-f $_ && $name =~ $re_apk) {
+      $process->($File::Find::name, $File::Find::dir);
+    }
+  };
+  for my $p (@_) {
+    dbg "processing $p";
+    unless (-e $p) {
+      msg "no such path, skip: $p";
+    }
+    elsif (-f $p && $p =~ $re_apk) {
+      $process->($p, dirname($p));
+    }
+    elsif (-d $p) {
+      find({wanted => $wanted, no_chdir => 1}, $p);
+    }
+  }
+}
