@@ -14,7 +14,7 @@ my %opt = (index => 'index.txt', help => 0,);
 # main
 my $script = basename($0);
 GetOptions("help|h" => \$opt{help}, "index|i=s" => \$opt{index});
-if ($opt{help} || $#ARGV < 1) {
+if ($opt{help} || @ARGV < 1) {
   print_help();
   exit;
 }
@@ -57,10 +57,10 @@ sub str { $_D->Values(\@_)->Dump }
 
 sub dbg { print STDERR join("\n", @_) . "\n" }
 sub msg { print STDOUT join("\n", @_) . "\n" }
-sub err { msg @_; exit 1 }
+sub err { msg(@_); exit 1 }
 
 sub main {
-  msg 'start';
+  msg('start');
 
   my %db = ();
   my %seen;
@@ -68,25 +68,25 @@ sub main {
     my $src = abs2rel(shift);
     my $dir = shift;
 
-    msg "found apk: $src";
+    msg("found apk: $src");
 
     my $info = get_apk_info($src);
     my $name = join('-', @{$info}{qw/package version/}) . '.apk';
     if ($seen{$name}) {
-      msg "duplicated $name, already found $seen{$name}, skip";
+      msg("duplicated $name, already found $seen{$name}, skip");
       return;
     }
 
     my $dst = abs2rel(catfile($dir, $name));
     if ($src eq $dst) {
-      msg "no need to rename";
+      msg("no need to rename");
     }
     else {
       if (rename($src, $dst)) {
-        msg "renamed to $dst";
+        msg("renamed to $dst");
       }
       else {
-        msg "fail to rename, skip";
+        msg("fail to rename, skip");
         return;
       }
     }
@@ -95,23 +95,23 @@ sub main {
   };
 
   if (my $v = get_aapt_version()) {
-    msg "found aapt $v";
+    msg("found aapt $v");
 
     find_apk($cb, @_);
     save_index(\%db, $opt{index});
   }
   else {
-      err "no aapt found, stop";
+      err("no aapt found, stop");
   }
 
-  msg 'done';
+  msg('done');
 }
 
 sub save_index {
   my $data = shift or die;
   my $path = shift or die;
 
-  msg "save index to $path";
+  msg("save index to $path");
 
   my $dir = dirname($path);
   make_path($dir) unless -e $dir;
@@ -136,8 +136,10 @@ sub unquote { $_[0] =~ /^'(.*)'$/ ? $1 : $_[0] }
 sub clean { unquote(trim($_[0])) }
 
 sub get_aapt_version {
-  for (scalar `aapt v`) {
+  my @lines = `aapt v`;
+  for (@lines) {
     chomp;
+
     if (/^Android Asset Packaging Tool,\s*(.+)$/) {
       return trim($1);
     }
@@ -149,7 +151,8 @@ sub get_apk_info {
   my $path = shift or die;
   my %info;
 
-  for (`aapt d badging $path`) {
+  my @lines = `aapt d badging $path`;
+  for (@lines) {
     chomp;
 
     if (/^application:\s*label='([^']+)'/) {
@@ -200,9 +203,9 @@ sub find_apk {
     }
   };
   for my $p (@_) {
-    dbg "processing $p";
+    dbg("processing $p");
     unless (-e $p) {
-      msg "no such path, skip: $p";
+      msg("no such path, skip: $p");
     }
     elsif (-f $p && $p =~ $re_apk) {
       $process->($p, dirname($p));
