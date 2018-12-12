@@ -3,7 +3,6 @@
 
 from __future__ import (absolute_import, division,
                         print_function, unicode_literals)
-from builtins import *
 
 import argparse
 import logging
@@ -32,7 +31,7 @@ def get_aapt_version():
     logger.debug('get_aapt_version')
     cmd = ['aapt', 'v']
     try:
-        l = subprocess.check_output(cmd).decode().splitlines()[0]
+        l = subprocess.check_output(cmd).decode('utf-8').splitlines()[0]
         m = re.match(r'Android Asset Packaging Tool,\s*(.+)$', l.rstrip())
         if m:
             return m.group(1)
@@ -51,7 +50,7 @@ def get_apk_info(path):
     info = {'launchable': []}
     cmd = ['aapt', 'd', 'badging', path]
 
-    lines = subprocess.check_output(cmd).decode().splitlines()
+    lines = subprocess.check_output(cmd).decode('utf-8').splitlines()
     for l in lines:
         if not 'title' in info:
             m = re.match(r"application-label(?:-en)?(?:-US)?:\s*(.+)$", l)
