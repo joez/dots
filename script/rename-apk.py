@@ -22,8 +22,8 @@ the format '<package>-<version>.apk', and output a index file to
 store the information, such as package name, version, title, etc.""")
 parser.add_argument("-v", "--version", action="version",
                     version="%(prog)s 0.0.1")
-parser.add_argument("-i", "--index", metavar="I",
-                    help="the output index file", default="index.json")
+parser.add_argument("-i", "--index",
+                    help="the output index file (default: index.json)", default="index.json")
 parser.add_argument("apk", help="APK file or directory", nargs="+")
 
 
@@ -128,6 +128,7 @@ def main():
     else:
         meta = {}
         seen = {}
+        index_dir = os.path.dirname(args.index)
         for src in find_apk(args.apk):
             logger.info('processing apk: ' + src)
             info = get_apk_info(src)
@@ -148,6 +149,8 @@ def main():
                         continue
                 meta[name] = info
                 seen[name] = dst
+                # add path relative to the index file
+                info['path'] = os.path.relpath(dst, start=index_dir)
 
         logger.info('save index to ' + args.index)
         save_index(meta, args.index)
