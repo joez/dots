@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # author: joe.zheng
 
-from __future__ import (absolute_import, division,
-                        print_function, unicode_literals)
-
 import argparse
 import logging
 import subprocess
@@ -11,6 +8,11 @@ import re
 import sys
 import json
 import os
+
+# hack here to ensure the current locale supports unicode correctly
+import locale
+if locale.getpreferredencoding() != 'UTF-8':
+    locale.setlocale(locale.LC_CTYPE, 'en_US.UTF-8')
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler())
@@ -27,17 +29,22 @@ parser.add_argument("-i", "--index",
 parser.add_argument("apk", help="APK file or directory", nargs="+")
 
 
+def sh(cmd):
+    logger.debug('sh: ' + ' '.join(cmd))
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, universal_newlines=True)
+    return p.stdout
+
+
 def get_aapt_version():
     logger.debug('get_aapt_version')
     cmd = ['aapt', 'v']
     try:
-        l = subprocess.check_output(cmd).decode('utf-8').splitlines()[0]
+        l = sh(cmd).splitlines()[0]
         m = re.match(r'Android Asset Packaging Tool,\s*(.+)$', l.rstrip())
         if m:
             return m.group(1)
     except Exception as e:
         logger.error(e)
-        return
 
 
 def clean(s):
@@ -50,8 +57,7 @@ def get_apk_info(path):
     info = {'launchable': []}
     cmd = ['aapt', 'd', 'badging', path]
 
-    lines = subprocess.check_output(cmd).decode('utf-8').splitlines()
-    for l in lines:
+    for l in sh(cmd).splitlines():
         if not 'title' in info:
             m = re.match(r"application-label(?:-en)?(?:-US)?:\s*(.+)$", l)
             if m:
@@ -85,7 +91,7 @@ def get_apk_info(path):
                     break
             continue
 
-    logger.debug(json.dumps(info, sort_keys=True))
+    logger.debug(json.dumps(info, sort_keys=True, ensure_ascii=False))
     return info
 
 
@@ -116,7 +122,7 @@ def find_apk(paths):
 def save_index(meta, path):
     logger.debug('save_index: ' + path)
     with open(path, 'w') as f:
-        f.write(json.dumps(meta, sort_keys=True, indent=4))
+        f.write(json.dumps(meta, sort_keys=True, ensure_ascii=False, indent=4))
 
 
 def main():
