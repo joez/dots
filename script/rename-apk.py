@@ -31,8 +31,7 @@ parser.add_argument("apk", help="APK file or directory", nargs="+")
 
 def sh(cmd):
     logger.debug('sh: ' + ' '.join(cmd))
-    p = subprocess.run(cmd, stdout=subprocess.PIPE, universal_newlines=True)
-    return p.stdout
+    return subprocess.check_output(cmd, universal_newlines=True)
 
 
 def get_aapt_version():
