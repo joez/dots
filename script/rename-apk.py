@@ -139,7 +139,7 @@ def save_index(meta, path):
 
 <body>
     <div class="container-fluid">
-        <div class="row">
+        <div class="row btn-group">
             <button type="button" class="btn btn-primary" id="download-csv">Download CSV</button>
             <button type="button" class="btn btn-primary" id="download-json">Download JSON</button>
             <button type="button" class="btn btn-primary" id="download-xlsx">Download XLSX</button>
@@ -149,8 +149,6 @@ def save_index(meta, path):
         </div>
     </div>
 
-    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.6/umd/popper.min.js" crossorigin="anonymous"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/js/bootstrap.min.js" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/tabulator-tables@4.1.4/dist/js/tabulator.min.js"></script>
 
@@ -169,16 +167,15 @@ def save_index(meta, path):
                 { title: "Launchable", field: "launchable", headerFilter: true },
             ],
         });
-        $$("#download-csv").click(function () {
+        document.getElementById("download-csv").onclick = function () {
             table.download("csv", "apk-info.csv");
-        });
-        $$("#download-json").click(function () {
+        };
+        document.getElementById("download-json").onclick = function () {
             table.download("json", "apk-info.json");
-        });
-        $$("#download-xlsx").click(function () {
+        };
+        document.getElementById("download-xlsx").onclick = function () {
             table.download("xlsx", "apk-info.xlsx", { sheetName: "data" });
-        });
-
+        };
     </script>
     <script src="http://oss.sheetjs.com/js-xlsx/xlsx.full.min.js"></script>
 
