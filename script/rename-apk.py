@@ -8,6 +8,7 @@ import re
 import sys
 import json
 import os
+from string import Template
 
 # hack here to ensure the current locale supports unicode correctly
 import locale
@@ -23,9 +24,9 @@ check the APK information by 'aapt' and unify the file name with
 the format '<package>-<version>.apk', and output a index file to
 store the information, such as package name, version, title, etc.""")
 parser.add_argument("-v", "--version", action="version",
-                    version="%(prog)s 0.0.1")
+                    version="%(prog)s 0.1.0")
 parser.add_argument("-i", "--index",
-                    help="the output index file (default: index.json)", default="index.json")
+                    help="the output index file (default: index.html)", default="index.html")
 parser.add_argument("apk", help="APK file or directory", nargs="+")
 
 
@@ -120,8 +121,74 @@ def find_apk(paths):
 
 def save_index(meta, path):
     logger.debug('save_index: ' + path)
+    data = json.dumps([meta[k] for k in sorted(meta.keys())],
+                      sort_keys=True, ensure_ascii=False, indent=4)
+    tmpl = '''
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabulator/4.1.4/css/bootstrap/tabulator_bootstrap4.min.css">
+
+    <title>APK info</title>
+</head>
+
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <button type="button" class="btn btn-primary" id="download-csv">Download CSV</button>
+            <button type="button" class="btn btn-primary" id="download-json">Download JSON</button>
+            <button type="button" class="btn btn-primary" id="download-xlsx">Download XLSX</button>
+        </div>
+        <div class="row">
+            <div id="table-body"></div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.6/umd/popper.min.js" crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/js/bootstrap.min.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/tabulator-tables@4.1.4/dist/js/tabulator.min.js"></script>
+
+    <script>
+        var data = $data;
+        var table = new Tabulator("#table-body", {
+            dataTree: true,
+            initialSort: [{ column: "path", dir: "asc" }],
+            index: "path",
+            data: data,
+            columns: [
+                { title: "Title", field: "title", headerFilter: true },
+                { title: "Package", field: "package", headerFilter: true },
+                { title: "Version", field: "version", headerFilter: true },
+                { title: "File", field: "path", formatter: "link", formatterParams:{ urlField: "path" }, headerFilter: true },
+                { title: "Launchable", field: "launchable", headerFilter: true },
+            ],
+        });
+        $$("#download-csv").click(function () {
+            table.download("csv", "apk-info.csv");
+        });
+        $$("#download-json").click(function () {
+            table.download("json", "apk-info.json");
+        });
+        $$("#download-xlsx").click(function () {
+            table.download("xlsx", "apk-info.xlsx", { sheetName: "data" });
+        });
+
+    </script>
+    <script src="http://oss.sheetjs.com/js-xlsx/xlsx.full.min.js"></script>
+
+</body>
+
+</html>
+    '''
+
     with open(path, 'w') as f:
-        f.write(json.dumps(meta, sort_keys=True, ensure_ascii=False, indent=4))
+        f.write(Template(tmpl).substitute(data=data))
 
 
 def main():
