@@ -56,8 +56,9 @@ def get_apk_info(path):
     logger.debug('get_apk_info: ' + path)
 
     info = {'launchable': []}
-    cmd = ['aapt', 'd', 'badging', path]
+    info['size'] = os.path.getsize(path)
 
+    cmd = ['aapt', 'd', 'badging', path]
     for l in sh(cmd).splitlines():
         if not 'title' in info:
             m = re.match(r"application-label(?:-en)?(?:-US)?:\s*(.+)$", l)
@@ -136,8 +137,9 @@ def save_index(meta, path):
                 d[k] = ', '.join(v)
         data.append(d)
 
+    json_data = json.dumps(data, sort_keys=True, ensure_ascii=False, indent=4)
     with open(os.path.join(path, data_file), 'w') as f:
-        f.write(json.dumps(data, sort_keys=True, ensure_ascii=False, indent=4))
+        f.write(json_data)
 
     tmpl = '''<!doctype html>
 <html lang="en">
@@ -168,16 +170,28 @@ def save_index(meta, path):
     <script src="https://unpkg.com/tabulator-tables@4.1.4/dist/js/tabulator.min.js"></script>
 
     <script>
+        var data = $data;
+        var format_size = function (cell, params) {
+            var unit, size = cell.getValue();
+            for (unit of ["", "KB", "MB", "GB", "TB", "PB"]) {
+                if (size < 1024) {
+                    break;
+                }
+                size = size / 1024;
+            }
+            return size.toFixed() + " " + unit;
+        };
         var table = new Tabulator("#table-body", {
             dataTree: true,
             initialSort: [{ column: "path", dir: "asc" }],
             index: "path",
-            ajaxURL:"$data",
+            data: data,
             columns: [
                 { title: "Title", field: "title", headerFilter: true },
                 { title: "Package", field: "package", headerFilter: true },
                 { title: "Version", field: "version", headerFilter: true },
-                { title: "File", field: "path", formatter: "link", formatterParams:{ urlField: "path" }, headerFilter: true },
+                { title: "File", field: "path", formatter: "link", formatterParams: { urlField: "path" }, headerFilter: true },
+                { title: "Size", field: "size", formatter: format_size, align: "right" },
                 { title: "Launchable", field: "launchable", headerFilter: true },
             ],
         });
@@ -199,7 +213,7 @@ def save_index(meta, path):
     '''
 
     with open(os.path.join(path, html_file), 'w') as f:
-        f.write(Template(tmpl).substitute(data=data_file))
+        f.write(Template(tmpl).substitute(data=json_data))
 
 
 def main():
@@ -211,7 +225,7 @@ def main():
     else:
         meta = {}
         seen = {}
-        out  = args.output
+        out = args.output
         for src in find_apk(args.apk):
             logger.info('processing apk: ' + src)
             info = get_apk_info(src)
