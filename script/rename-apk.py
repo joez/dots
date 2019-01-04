@@ -2,6 +2,7 @@
 # author: joe.zheng
 
 import argparse
+import copy
 import logging
 import subprocess
 import re
@@ -25,8 +26,8 @@ the format '<package>-<version>.apk', and output a index file to
 store the information, such as package name, version, title, etc.""")
 parser.add_argument("-v", "--version", action="version",
                     version="%(prog)s 0.1.0")
-parser.add_argument("-i", "--index",
-                    help="the output index file (default: index.html)", default="index.html")
+parser.add_argument("-o", "--output",
+                    help="the output folder for the index file (default: .)", default=".")
 parser.add_argument("apk", help="APK file or directory", nargs="+")
 
 
@@ -81,6 +82,7 @@ def get_apk_info(path):
                     continue
             continue
 
+        # TODO: add "leanback-launchable-activity" to support TV
         m = re.match(r"launchable-activity:\s*(.+)$", l)
         if m:
             for attr in re.split(r'\s+', m.group(1)):
@@ -121,10 +123,23 @@ def find_apk(paths):
 
 def save_index(meta, path):
     logger.debug('save_index: ' + path)
-    data = json.dumps([meta[k] for k in sorted(meta.keys())],
-                      sort_keys=True, ensure_ascii=False, indent=4)
-    tmpl = '''
-<!doctype html>
+
+    data_file = 'index.json'
+    html_file = 'index.html'
+
+    data = []
+    for name in sorted(meta.keys()):
+        d = copy.copy(meta[name])
+        for k, v in d.items():
+            # list is not easy to be saved into csv, so convert it into a string
+            if isinstance(v, list):
+                d[k] = ', '.join(v)
+        data.append(d)
+
+    with open(os.path.join(path, data_file), 'w') as f:
+        f.write(json.dumps(data, sort_keys=True, ensure_ascii=False, indent=4))
+
+    tmpl = '''<!doctype html>
 <html lang="en">
 
 <head>
@@ -153,12 +168,11 @@ def save_index(meta, path):
     <script src="https://unpkg.com/tabulator-tables@4.1.4/dist/js/tabulator.min.js"></script>
 
     <script>
-        var data = $data;
         var table = new Tabulator("#table-body", {
             dataTree: true,
             initialSort: [{ column: "path", dir: "asc" }],
             index: "path",
-            data: data,
+            ajaxURL:"$data",
             columns: [
                 { title: "Title", field: "title", headerFilter: true },
                 { title: "Package", field: "package", headerFilter: true },
@@ -184,8 +198,8 @@ def save_index(meta, path):
 </html>
     '''
 
-    with open(path, 'w') as f:
-        f.write(Template(tmpl).substitute(data=data))
+    with open(os.path.join(path, html_file), 'w') as f:
+        f.write(Template(tmpl).substitute(data=data_file))
 
 
 def main():
@@ -197,7 +211,7 @@ def main():
     else:
         meta = {}
         seen = {}
-        index_dir = os.path.dirname(args.index)
+        out  = args.output
         for src in find_apk(args.apk):
             logger.info('processing apk: ' + src)
             info = get_apk_info(src)
@@ -219,10 +233,10 @@ def main():
                 meta[name] = info
                 seen[name] = dst
                 # add path relative to the index file
-                info['path'] = os.path.relpath(dst, start=index_dir)
+                info['path'] = os.path.relpath(dst, start=out)
 
-        logger.info('save index to ' + args.index)
-        save_index(meta, args.index)
+        logger.info('save index to ' + out)
+        save_index(meta, out)
 
 
 if __name__ == '__main__':
