@@ -25,11 +25,11 @@ parser.add_argument("-v", "--version", action="version",
 subparsers = parser.add_subparsers(dest='cmd')
 subparsers.add_parser('update', help='update index from remote repository')
 subparsers.add_parser('search', help='search apk').add_argument(
-    "pattern", help="regex pattern to search")
+    "pattern", help="regex pattern to search", default='.', nargs="?")
 subparsers.add_parser('install', help='install apk').add_argument(
-    "apk", help="APK name", nargs="+")
+    "name", help="apk name", nargs="+")
 subparsers.add_parser('uninstall', help='uninstall apk').add_argument(
-    "apk", help="APK name", nargs="+")
+    "name", help="apk name", nargs="+")
 
 
 class Repo:
@@ -86,8 +86,7 @@ class Repo:
                 try:
                     info, raw_info = {}, json.load(f)
                     for item in raw_info:
-                        name = '-'.join([item[k]
-                                         for k in ('package', 'version')])
+                        name = '-'.join([item['package'], item['version']])
                         info[name] = item
                     self.apk_info = info
                     logger.debug(json.dumps(
@@ -105,7 +104,24 @@ class Repo:
         return self.load_apk_info()
 
     def search(self, pattern):
-        return []
+        self.ensure_apk_info()
+        pat = re.compile(pattern, flags=re.I)
+        names = []
+        for k, v in self.apk_info.items():
+            # search name first
+            m = pat.search(k)
+            if m:
+                names.append(k)
+                continue
+
+            # search the other fields
+            for v in ("title", "path"):
+                m = pat.search(v)
+                if m:
+                    names.append(k)
+                    break
+        result = [(k, self.apk_info[k]) for k in sorted(names)]
+        return result
 
     def install(self, name):
         self.ensure_dirs()
@@ -139,25 +155,33 @@ def main():
     args = parser.parse_args()
     repo = Repo()
     if args.cmd == 'update':
-        repo.update()
+        if repo.update():
+            print("update success")
+        else:
+            print("update fail")
+            sys.exit(1)
     elif args.cmd == 'search':
-        repo.search(args.pattern)
+        result = repo.search(args.pattern)
+        for name, info in result:
+            print("{name:50s} {title:28s}".format(
+                name=name, title=info['title']))
+
     elif args.cmd == 'install':
-        for name in args.apk:
+        for name in args.name:
             if repo.install(name):
-                logger.info("install " + name + " success")
+                print("install " + name + " success")
             else:
-                logger.error("install " + name + " fail")
+                print("install " + name + " fail")
                 sys.exit(1)
     elif args.cmd == 'uninstall':
-        for name in args.apk:
+        for name in args.name:
             if repo.uninstall(name):
-                logger.info("uninstall " + name + " success")
+                print("uninstall " + name + " success")
             else:
-                logger.error("uninstall " + name + " fail")
+                print("uninstall " + name + " fail")
                 sys.exit(1)
     else:
-        logger.error('no such command')
+        print('no such command')
         sys.exit(1)
 
 
