@@ -8,6 +8,8 @@ import re
 import sys
 import json
 import os
+import urllib.request
+import shutil
 
 # hack here to ensure the current locale supports unicode correctly
 import locale
@@ -64,7 +66,7 @@ class Repo:
         if os.path.exists(dst):
             return dst
         else:
-            src = os.path.join(self.repo_url, path)
+            src = self.repo_url + path
             if self.download_apk(src, dst):
                 return dst
 
@@ -72,8 +74,11 @@ class Repo:
         return os.path.join(self.install_dir, name)
 
     def download_apk(self, src, dst):
-        # TODO: download from server
-        return
+        chunk = 1024 * 1024
+        with urllib.request.urlopen(src) as res:
+            with open(dst, 'w') as f:
+                shutil.copyfileobj(res, f, chunk)
+        return True
 
     def get_apk_info(self, name):
         self.ensure_apk_info()
@@ -99,7 +104,12 @@ class Repo:
 
     def update(self):
         self.ensure_dirs()
-        # TODO: download manifest from remote repository
+
+        src = self.repo_url + 'index.json'
+        dst = self.manifest
+        with urllib.request.urlopen(src) as res:
+            with open(dst, 'w') as f:
+                f.write(res.read().decode('utf-8'))
 
         return self.load_apk_info()
 
