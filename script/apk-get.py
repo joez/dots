@@ -76,7 +76,10 @@ class Repo:
     def download_apk(self, src, dst):
         chunk = 1024 * 1024
         with urllib.request.urlopen(src) as res:
-            with open(dst, 'w') as f:
+            d = os.path.dirname(dst)
+            if not os.path.exists(d):
+                os.makedirs(d)
+            with open(dst, 'wb') as f:
                 shutil.copyfileobj(res, f, chunk)
         return True
 
