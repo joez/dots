@@ -71,7 +71,7 @@ class Repo:
                 return dst
 
     def get_installed_apk(self, name):
-        return os.path.join(self.install_dir, name)
+        return os.path.join(self.install_dir, name + '.apk')
 
     def download_apk(self, src, dst):
         chunk = 1024 * 1024
