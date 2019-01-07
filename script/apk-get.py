@@ -79,6 +79,7 @@ class Repo:
             d = os.path.dirname(dst)
             if not os.path.exists(d):
                 os.makedirs(d)
+            logger.info("downloading...")
             with open(dst, 'wb') as f:
                 shutil.copyfileobj(res, f, chunk)
         return True
@@ -146,7 +147,7 @@ class Repo:
                 os.link(path, to)
                 return True
             except OSError as e:
-                logger.warning("can't create link to " + to + " error: " + e)
+                logger.warning("can't create link to " + to + " error: " + str(e))
         else:
             logger.warning("can't find: " + name)
 
@@ -159,7 +160,7 @@ class Repo:
                 os.unlink(path)
                 return True
             except OSError as e:
-                logger.warning("can't unlink " + path + " error: " + e)
+                logger.warning("can't unlink " + path + " error: " + str(e))
         else:
             logger.warning("can't find: " + path)
 
