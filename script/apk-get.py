@@ -18,7 +18,7 @@ if locale.getpreferredencoding() != 'UTF-8':
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler())
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 parser = argparse.ArgumentParser(
     description="""A simple package manager for the Android apk""")
@@ -28,6 +28,7 @@ subparsers = parser.add_subparsers(dest='cmd')
 subparsers.add_parser('update', help='update index from remote repository')
 subparsers.add_parser('search', help='search apk').add_argument(
     "pattern", help="regex pattern to search", default='.', nargs="?")
+subparsers.add_parser('list', help='list installed apk')
 subparsers.add_parser('install', help='install apk').add_argument(
     "name", help="apk name", nargs="+")
 subparsers.add_parser('uninstall', help='uninstall apk').add_argument(
@@ -137,6 +138,14 @@ class Repo:
         result = [(k, self.apk_info[k]) for k in sorted(names)]
         return result
 
+    def installed(self):
+        self.ensure_apk_info()
+        info = self.apk_info
+        if info:
+            result = [(n, info[n]) for n in sorted(info.keys())
+                      if os.path.exists(self.get_installed_apk(n))]
+            return result
+
     def install(self, name):
         self.ensure_dirs()
         path = self.get_downloaded_apk(name)
@@ -147,7 +156,8 @@ class Repo:
                 os.link(path, to)
                 return True
             except OSError as e:
-                logger.warning("can't create link to " + to + " error: " + str(e))
+                logger.warning("can't create link to " +
+                               to + " error: " + str(e))
         else:
             logger.warning("can't find: " + name)
 
@@ -179,7 +189,11 @@ def main():
         for name, info in result:
             print("{name:50s} {title:28s}".format(
                 name=name, title=info['title']))
-
+    elif args.cmd == 'list':
+        result = repo.installed()
+        for name, info in result:
+            print("{name:50s} {title:28s}".format(
+                name=name, title=info['title']))
     elif args.cmd == 'install':
         for name in args.name:
             if repo.install(name):
