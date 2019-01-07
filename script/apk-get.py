@@ -24,6 +24,10 @@ parser = argparse.ArgumentParser(
     description="""A simple package manager for the Android apk""")
 parser.add_argument("-v", "--version", action="version",
                     version="%(prog)s 0.1.0")
+parser.add_argument("-u", "--url", help="URL of the remote repository (default: %(default)s)",
+                    default='http://localhost:3000/')
+parser.add_argument(
+    "-r", "--root", help="root of the local repository (default: %(default)s)", default='app')
 subparsers = parser.add_subparsers(dest='cmd')
 subparsers.add_parser('update', help='update index from remote repository')
 subparsers.add_parser('search', help='search apk').add_argument(
@@ -36,13 +40,19 @@ subparsers.add_parser('uninstall', help='uninstall apk').add_argument(
 
 
 class Repo:
-    def __init__(self):
-        self.repo_url = ''  # the remote repository URL
-        self.root_dir = 'app'  # the local root directory
+    def __init__(self, url='http://localhost:3000/', root='app'):
+        # the remote repository URL
+        self.repo_url = url
+        if self.repo_url[-1] != '/':
+            self.repo_url = self.repo_url + '/'
+
         # the local repository directory
+        self.root_dir = root
         self.repo_dir = os.path.join(self.root_dir, 'repo')
         self.manifest = os.path.join(self.repo_dir, 'index.json')
         self.install_dir = os.path.join(self.root_dir, 'install')
+
+        logger.debug("url: " + self.repo_url + ", root: " + self.root_dir)
 
         # apk information, apk name is the dict key
         self.apk_info = {}
@@ -177,7 +187,7 @@ class Repo:
 
 def main():
     args = parser.parse_args()
-    repo = Repo()
+    repo = Repo(url=args.url, root=args.root)
     if args.cmd == 'update':
         if repo.update():
             print("update success")
