@@ -10,6 +10,7 @@ import json
 import os
 import urllib.request
 import shutil
+import zipfile
 
 # hack here to ensure the current locale supports unicode correctly
 import locale
@@ -57,6 +58,12 @@ class Repo:
         # apk information, apk name is the dict key
         self.apk_info = {}
 
+        # see also: libcore/libart/src/main/java/dalvik/system/VMRuntime.java
+        self.abi2isa = {'x86': 'x86', 'x86_64': 'x86_64',
+                        'armeabi': 'arm', 'armeabi-v7a': 'arm', 'arm64-v8a': 'arm64'}
+        self.abis = ['x86', 'x86_64', 'armeabi',
+                     'armeabi-v7a', 'arm64-v8a']  # the order matters
+
     def ensure_dirs(self):
         for d in (self.root_dir, self.repo_dir, self.install_dir):
             if not os.path.exists(d):
@@ -82,7 +89,7 @@ class Repo:
                 return dst
 
     def get_installed_apk(self, name):
-        return os.path.join(self.install_dir, name + '.apk')
+        return os.path.join(self.install_dir, name, name + '.apk')
 
     def download_apk(self, src, dst):
         chunk = 1024 * 1024
@@ -93,6 +100,30 @@ class Repo:
             logger.info("downloading...")
             with open(dst, 'wb') as f:
                 shutil.copyfileobj(res, f, chunk)
+        return True
+
+    def deploy_apk_lib(self, src, dst):
+        if not os.path.exists(dst):
+            os.makedirs(dst)
+        with zipfile.ZipFile(src) as zf:
+            for f in zf.namelist():
+                if f.startswith('lib/'):
+                    zf.extract(f, dst)
+        # convert ABI to ISA
+        for abi in self.abis:
+            if abi in self.abi2isa:
+                isa = self.abi2isa[abi]
+                if abi != isa:
+                    abi_dir = os.path.join(dst, 'lib', abi)
+                    isa_dir = os.path.join(dst, 'lib', isa)
+                    if os.path.exists(abi_dir):
+                        if os.path.exists(isa_dir):
+                            logger.debug(
+                                "the target ISA is already deployed, skip " + abi)
+                        else:
+                            os.rename(abi_dir, isa_dir)
+            else:
+                logger.warning("ABI " + abi + ' is not supported, skip')
         return True
 
     def get_apk_info(self, name):
@@ -163,11 +194,13 @@ class Repo:
         if path:
             to = self.get_installed_apk(name)
             try:
+                d = os.path.dirname(to)
+                if not os.path.exists(d):
+                    os.makedirs(d)
                 os.link(path, to)
-                return True
+                return self.deploy_apk_lib(to, d)
             except OSError as e:
-                logger.warning("can't create link to " +
-                               to + " error: " + str(e))
+                logger.warning(str(e))
         else:
             logger.warning("can't find: " + name)
 
@@ -177,10 +210,11 @@ class Repo:
         logger.debug("uninstall " + name + " at " + path)
         if os.path.exists(path):
             try:
-                os.unlink(path)
+                d = os.path.dirname(path)
+                shutil.rmtree(d)
                 return True
             except OSError as e:
-                logger.warning("can't unlink " + path + " error: " + str(e))
+                logger.warning(str(e))
         else:
             logger.warning("can't find: " + path)
 
