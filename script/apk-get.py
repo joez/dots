@@ -29,7 +29,7 @@ parser.add_argument("-u", "--url", help="URL of the remote repository (default: 
                     default='http://localhost:3000/')
 parser.add_argument(
     "-r", "--root", help="root of the local repository (default: %(default)s)", default='app')
-subparsers = parser.add_subparsers(dest='cmd')
+subparsers = parser.add_subparsers(dest='cmd', metavar='COMMAND')
 subparsers.add_parser('update', help='update index from remote repository')
 subparsers.add_parser('search', help='search apk').add_argument(
     "pattern", help="regex pattern to search", default='.', nargs="?")
@@ -51,7 +51,7 @@ class Repo:
         self.root_dir = root
         self.repo_dir = os.path.join(self.root_dir, 'repo')
         self.manifest = os.path.join(self.repo_dir, 'index.json')
-        self.install_dir = os.path.join(self.root_dir, 'install')
+        self.installed_dir = os.path.join(self.root_dir, 'installed')
 
         logger.debug("url: " + self.repo_url + ", root: " + self.root_dir)
 
@@ -65,31 +65,39 @@ class Repo:
                      'armeabi-v7a', 'arm64-v8a']  # the order matters
 
     def ensure_dirs(self):
-        for d in (self.root_dir, self.repo_dir, self.install_dir):
+        for d in (self.root_dir, self.repo_dir, self.installed_dir):
             if not os.path.exists(d):
                 os.makedirs(d)
 
     def ensure_apk_info(self):
         if not self.apk_info:
             if not self.load_apk_info():
-                self.update()
+                if not self.update():
+                    raise RuntimeError(
+                        "apk manifest can't be loaded successfully")
+
+    def remote_apk_url(self, name):
+        path = self.get_apk_info(name)['path']
+        return os.path.join(self.repo_url, path)
+
+    def downloaded_apk_path(self, name):
+        path = self.get_apk_info(name)['path']
+        return os.path.join(self.repo_dir, path)
+
+    def installed_apk_path(self, name):
+        return os.path.join(self.installed_dir, name, name + '.apk')
 
     def get_downloaded_apk(self, name):
-        info = self.get_apk_info(name)
-        if not info:
-            logger.warning("can't find info for " + name)
-            return
-        path = info['path']
-        dst = os.path.join(self.repo_dir, path)
+        dst = self.downloaded_apk_path(name)
         if os.path.exists(dst):
             return dst
         else:
-            src = self.repo_url + path
+            src = self.remote_apk_url(name)
             if self.download_apk(src, dst):
                 return dst
 
-    def get_installed_apk(self, name):
-        return os.path.join(self.install_dir, name, name + '.apk')
+    def is_apk_installed(self, name):
+        return os.path.exists(self.installed_apk_path(name))
 
     def download_apk(self, src, dst):
         chunk = 1024 * 1024
@@ -134,19 +142,12 @@ class Repo:
     def load_apk_info(self):
         if os.path.exists(self.manifest):
             with open(self.manifest, 'r') as f:
-                try:
-                    info, raw_info = {}, json.load(f)
-                    for item in raw_info:
-                        name = '-'.join([item['package'], item['version']])
-                        info[name] = item
-                    self.apk_info = info
-                    logger.debug(json.dumps(
-                        info, sort_keys=True, ensure_ascii=False))
-                    return True
-                except json.JSONDecodeError as e:
-                    logger.warning("invalid json file: " + e)
-        else:
-            logger.warning("no manifest found")
+                info, raw_info = {}, json.load(f)
+                for item in raw_info:
+                    name = '-'.join([item['package'], item['version']])
+                    info[name] = item
+                self.apk_info = info
+                return True
 
     def update(self):
         self.ensure_dirs()
@@ -183,8 +184,8 @@ class Repo:
         self.ensure_apk_info()
         info = self.apk_info
         if info:
-            result = [(n, info[n]) for n in sorted(info.keys())
-                      if os.path.exists(self.get_installed_apk(n))]
+            result = [(n, info[n])
+                      for n in sorted(info.keys()) if self.is_apk_installed(n)]
             return result
 
     def install(self, name):
@@ -192,7 +193,11 @@ class Repo:
         path = self.get_downloaded_apk(name)
         logger.debug("install " + name + " from " + str(path))
         if path:
-            to = self.get_installed_apk(name)
+            if self.is_apk_installed(name):
+                logger.warning(name + " has already been installed")
+                return
+
+            to = self.installed_apk_path(name)
             try:
                 d = os.path.dirname(to)
                 if not os.path.exists(d):
@@ -206,7 +211,7 @@ class Repo:
 
     def uninstall(self, name):
         self.ensure_dirs()
-        path = self.get_installed_apk(name)
+        path = self.installed_apk_path(name)
         logger.debug("uninstall " + name + " at " + path)
         if os.path.exists(path):
             try:
