@@ -21,24 +21,6 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler())
 logger.setLevel(logging.INFO)
 
-parser = argparse.ArgumentParser(
-    description="""A simple package manager for the Android apk""")
-parser.add_argument("-v", "--version", action="version",
-                    version="%(prog)s 0.1.0")
-parser.add_argument("-u", "--url", help="URL of the remote repository (default: %(default)s)",
-                    default='http://localhost:3000/')
-parser.add_argument(
-    "-r", "--root", help="root of the local repository (default: %(default)s)", default='app')
-subparsers = parser.add_subparsers(dest='cmd', metavar='COMMAND')
-subparsers.add_parser('update', help='update index from remote repository')
-subparsers.add_parser('search', help='search apk').add_argument(
-    "pattern", help="regex pattern to search", default='.', nargs="?")
-subparsers.add_parser('list', help='list installed apk')
-subparsers.add_parser('install', help='install apk').add_argument(
-    "name", help="apk name", nargs="+")
-subparsers.add_parser('uninstall', help='uninstall apk').add_argument(
-    "name", help="apk name", nargs="+")
-
 
 class Repo:
     def __init__(self, url='http://localhost:3000/', root='app'):
@@ -188,45 +170,78 @@ class Repo:
                       for n in sorted(info.keys()) if self.is_apk_installed(n)]
             return result
 
-    def install(self, name):
+    def install(self, name, reinstall=False):
         self.ensure_dirs()
         path = self.get_downloaded_apk(name)
         logger.debug("install " + name + " from " + str(path))
         if path:
             if self.is_apk_installed(name):
-                logger.warning(name + " has already been installed")
-                return
+                if reinstall:
+                    self.uninstall(name, force=True)
+                else:
+                    logger.warning(name + " has already been installed")
+                    return
 
             to = self.installed_apk_path(name)
-            try:
-                d = os.path.dirname(to)
-                if not os.path.exists(d):
-                    os.makedirs(d)
-                os.link(path, to)
-                return self.deploy_apk_lib(to, d)
-            except OSError as e:
-                logger.warning(str(e))
+            d = os.path.dirname(to)
+            if not os.path.exists(d):
+                os.makedirs(d)
+            os.link(path, to)
+            return self.deploy_apk_lib(to, d)
         else:
             logger.warning("can't find: " + name)
 
-    def uninstall(self, name):
-        self.ensure_dirs()
-        path = self.installed_apk_path(name)
-        logger.debug("uninstall " + name + " at " + path)
-        if os.path.exists(path):
-            try:
-                d = os.path.dirname(path)
-                shutil.rmtree(d)
-                return True
-            except OSError as e:
-                logger.warning(str(e))
+    def uninstall(self, name, all=False, force=False):
+        if all:
+            logger.debug("uninstall all")
+            shutil.rmtree(self.installed_dir)
+            self.ensure_dirs()
+            return True
         else:
-            logger.warning("can't find: " + path)
+            path = self.installed_apk_path(name)
+            logger.debug("uninstall " + name + " at " + path)
+            if os.path.exists(path):
+                shutil.rmtree(os.path.dirname(path))
+                return True
+            elif force:
+                return True
+            else:
+                logger.warning("can't find: " + path)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='A simple package manager for the Android apk', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('-v', '--version', action='version',
+                        version='%(prog)s 0.1.0')
+    parser.add_argument('-u', '--url', help='the remote repository',
+                        default='http://localhost:3000/')
+    parser.add_argument(
+        '-l', '--local', help='the local repository', default='app')
+
+    subps = parser.add_subparsers(
+        dest='cmd', title='supported commands', metavar='COMMAND')
+
+    p = subps.add_parser('update', aliases=['u'], help='update manifest')
+    p = subps.add_parser('search', aliases=['s'], help='search apk')
+    p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
+    p = subps.add_parser('list', aliases=['l'], help='list installed apk')
+    p = subps.add_parser('install', aliases=['i'], help='install apk')
+    p.add_argument('name', help='apk name', nargs='+')
+    p.add_argument('-r', '--reinstall', action='store_true',
+                   help='reinstall if necessary')
+    p = subps.add_parser('uninstall', aliases=['d'], help='uninstall apk')
+    p.add_argument('name', help='apk name', nargs='*')
+    p.add_argument('-a', '--all', action='store_true', help='uninstall all')
+    p.add_argument('-f', '--force', action='store_true',
+                   help='no error if not found')
+
+    return parser.parse_args()
 
 
 def main():
-    args = parser.parse_args()
-    repo = Repo(url=args.url, root=args.root)
+    args = parse_args()
+    repo = Repo(url=args.url, root=args.local)
     if args.cmd == 'update':
         if repo.update():
             print("update success")
@@ -245,14 +260,14 @@ def main():
                 name=name, title=info['title']))
     elif args.cmd == 'install':
         for name in args.name:
-            if repo.install(name):
+            if repo.install(name, reinstall=args.reinstall):
                 print("install " + name + " success")
             else:
                 print("install " + name + " fail")
                 sys.exit(1)
     elif args.cmd == 'uninstall':
         for name in args.name:
-            if repo.uninstall(name):
+            if repo.uninstall(name, all=args.all, force=args.force):
                 print("uninstall " + name + " success")
             else:
                 print("uninstall " + name + " fail")
