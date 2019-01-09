@@ -226,7 +226,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description='A simple package manager for the Android apk', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-v', '--version', action='version',
-                        version='%(prog)s 0.1.0')
+                        version='%(prog)s 0.8.0')
     parser.add_argument('-u', '--url', help='the remote repository',
                         default='http://localhost:3000/')
     parser.add_argument(
