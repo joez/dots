@@ -235,18 +235,18 @@ def parse_args():
     subps = parser.add_subparsers(
         dest='cmd', title='supported commands', metavar='COMMAND')
 
-    p = subps.add_parser('clean', aliases=['c'], help='clean the cache')
-    p = subps.add_parser('update', aliases=['u'], help='update manifest')
-    p = subps.add_parser('search', aliases=['s'], help='search apk')
+    p = subps.add_parser('clean', help='clean the cache')
+    p = subps.add_parser('update', help='update manifest')
+    p = subps.add_parser('search', help='search apk')
     p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
     p.add_argument('-v', '--verbose', action='store_true',
                    help='more information')
-    p = subps.add_parser('list', aliases=['l'], help='list installed apk')
-    p = subps.add_parser('install', aliases=['i'], help='install apk')
+    p = subps.add_parser('list', help='list installed apk')
+    p = subps.add_parser('install', help='install apk')
     p.add_argument('name', help='apk name', nargs='+')
     p.add_argument('-r', '--reinstall', action='store_true',
                    help='reinstall if necessary')
-    p = subps.add_parser('uninstall', aliases=['d'], help='uninstall apk')
+    p = subps.add_parser('uninstall', help='uninstall apk')
     p.add_argument('name', help='apk name', nargs='*')
     p.add_argument('-a', '--all', action='store_true', help='uninstall all')
     p.add_argument('-f', '--force', action='store_true',
