@@ -31,9 +31,9 @@ class Repo:
 
         # the local repository directory
         self.root_dir = root
-        self.repo_dir = os.path.join(self.root_dir, 'repo')
-        self.manifest = os.path.join(self.repo_dir, 'index.json')
+        self.cache_dir = os.path.join(self.root_dir, 'cache')
         self.installed_dir = os.path.join(self.root_dir, 'installed')
+        self.manifest = os.path.join(self.cache_dir, 'index.json')
 
         logger.debug("url: " + self.repo_url + ", root: " + self.root_dir)
 
@@ -47,7 +47,7 @@ class Repo:
                      'armeabi-v7a', 'arm64-v8a']  # the order matters
 
     def ensure_dirs(self):
-        for d in (self.root_dir, self.repo_dir, self.installed_dir):
+        for d in (self.root_dir, self.cache_dir, self.installed_dir):
             if not os.path.exists(d):
                 os.makedirs(d)
 
@@ -64,7 +64,7 @@ class Repo:
 
     def downloaded_apk_path(self, name):
         path = self.get_apk_info(name)['path']
-        return os.path.join(self.repo_dir, path)
+        return os.path.join(self.cache_dir, path)
 
     def installed_apk_path(self, name):
         return os.path.join(self.installed_dir, name, name + '.apk')
@@ -130,6 +130,19 @@ class Repo:
                     info[name] = item
                 self.apk_info = info
                 return True
+
+    def clean(self):
+        if os.path.exists(self.cache_dir):
+            # move the manifest to the root dir to prevent it from being deleted
+            # and move back later
+            m = os.path.join(self.root_dir, os.path.basename(self.manifest))
+            try:
+                os.rename(self.manifest, m)
+                shutil.rmtree(self.cache_dir)
+            finally:
+                self.ensure_dirs()
+                os.rename(m, self.manifest)
+        return True
 
     def update(self):
         self.ensure_dirs()
@@ -222,6 +235,7 @@ def parse_args():
     subps = parser.add_subparsers(
         dest='cmd', title='supported commands', metavar='COMMAND')
 
+    p = subps.add_parser('clean', aliases=['c'], help='clean the cache')
     p = subps.add_parser('update', aliases=['u'], help='update manifest')
     p = subps.add_parser('search', aliases=['s'], help='search apk')
     p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
@@ -244,7 +258,13 @@ def parse_args():
 def main():
     args = parse_args()
     repo = Repo(url=args.url, root=args.local)
-    if args.cmd == 'update':
+    if args.cmd == 'clean':
+        if repo.clean():
+            print("clean success")
+        else:
+            print("clean fail")
+            sys.exit(1)
+    elif args.cmd == 'update':
         if repo.update():
             print("update success")
         else:
