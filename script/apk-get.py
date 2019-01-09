@@ -225,6 +225,8 @@ def parse_args():
     p = subps.add_parser('update', aliases=['u'], help='update manifest')
     p = subps.add_parser('search', aliases=['s'], help='search apk')
     p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
+    p.add_argument('-v', '--verbose', action='store_true',
+                   help='more information')
     p = subps.add_parser('list', aliases=['l'], help='list installed apk')
     p = subps.add_parser('install', aliases=['i'], help='install apk')
     p.add_argument('name', help='apk name', nargs='+')
@@ -251,8 +253,11 @@ def main():
     elif args.cmd == 'search':
         result = repo.search(args.pattern)
         for name, info in result:
-            print("{name:50s} {title:28s}".format(
-                name=name, title=info['title']))
+            if args.verbose:
+                print(name + ": " + json.dumps(info, ensure_ascii=False, indent=4))
+            else:
+                print("{name:50s} {title:28s}".format(
+                    name=name, title=info['title']))
     elif args.cmd == 'list':
         result = repo.installed()
         for name, info in result:
