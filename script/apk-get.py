@@ -159,18 +159,18 @@ class Repo:
         self.ensure_apk_info()
         pat = re.compile(pattern, flags=re.I)
         names = []
-        for k, v in self.apk_info.items():
+        for name, info in self.apk_info.items():
             # search name first
-            m = pat.search(k)
+            m = pat.search(name)
             if m:
-                names.append(k)
+                names.append(name)
                 continue
 
             # search the other fields
-            for v in ("title", "path"):
-                m = pat.search(v)
+            for f in ("title", "path"):
+                m = pat.search(info[f])
                 if m:
-                    names.append(k)
+                    names.append(name)
                     break
         result = [(k, self.apk_info[k]) for k in sorted(names)]
         return result
