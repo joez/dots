@@ -175,14 +175,6 @@ class Repo:
         result = [(k, self.apk_info[k]) for k in sorted(names)]
         return result
 
-    def installed(self):
-        self.ensure_apk_info()
-        info = self.apk_info
-        if info:
-            result = [(n, info[n])
-                      for n in sorted(info.keys()) if self.is_apk_installed(n)]
-            return result
-
     def install(self, name, reinstall=False):
         self.ensure_dirs()
         path = self.get_downloaded_apk(name)
@@ -242,6 +234,9 @@ def parse_args():
     p.add_argument('-v', '--verbose', action='store_true',
                    help='more information')
     p = subps.add_parser('list', help='list installed apk')
+    p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
+    p.add_argument('-v', '--verbose', action='store_true',
+                   help='more information')
     p = subps.add_parser('install', help='install apk')
     p.add_argument('name', help='apk name', nargs='+')
     p.add_argument('-r', '--reinstall', action='store_true',
@@ -252,6 +247,15 @@ def parse_args():
                    help='no error if not found')
 
     return parser.parse_args()
+
+
+def show_apks(apk_info, verbose=False):
+    for name, info in apk_info:
+        if verbose:
+            print(name + ": " + json.dumps(info, ensure_ascii=False, indent=4))
+        else:
+            print("{name:50s} {title:28s}".format(
+                name=name, title=info['title']))
 
 
 def main():
@@ -271,17 +275,11 @@ def main():
             sys.exit(1)
     elif args.cmd == 'search':
         result = repo.search(args.pattern)
-        for name, info in result:
-            if args.verbose:
-                print(name + ": " + json.dumps(info, ensure_ascii=False, indent=4))
-            else:
-                print("{name:50s} {title:28s}".format(
-                    name=name, title=info['title']))
+        show_apks(result, verbose=args.verbose)
     elif args.cmd == 'list':
-        result = repo.installed()
-        for name, info in result:
-            print("{name:50s} {title:28s}".format(
-                name=name, title=info['title']))
+        result = [(n, i) for (n, i) in repo.search(
+            args.pattern) if repo.is_apk_installed(n)]
+        show_apks(result, verbose=args.verbose)
     elif args.cmd == 'install':
         for name in args.name:
             if repo.install(name, reinstall=args.reinstall):
