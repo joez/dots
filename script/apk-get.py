@@ -247,8 +247,7 @@ def parse_args():
     p.add_argument('-r', '--reinstall', action='store_true',
                    help='reinstall if necessary')
     p = subps.add_parser('uninstall', help='uninstall apk')
-    p.add_argument('name', help='apk name', nargs='*')
-    p.add_argument('-a', '--all', action='store_true', help='uninstall all')
+    p.add_argument('name', help='apk name or "all"', nargs='+')
     p.add_argument('-f', '--force', action='store_true',
                    help='no error if not found')
 
@@ -291,8 +290,12 @@ def main():
                 print("install " + name + " fail")
                 sys.exit(1)
     elif args.cmd == 'uninstall':
-        for name in args.name:
-            if repo.uninstall(name, all=args.all, force=args.force):
+        names = args.name
+        if 'all' in args.name:
+            names = ['all']
+
+        for name in names:
+            if repo.uninstall(name, all=True if name is 'all' else False, force=args.force):
                 print("uninstall " + name + " success")
             else:
                 print("uninstall " + name + " fail")
