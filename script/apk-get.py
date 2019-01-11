@@ -59,24 +59,37 @@ class Repo:
                         "apk manifest can't be loaded successfully")
 
     def remote_apk_url(self, name):
-        path = self.get_apk_info(name)['path']
-        return os.path.join(self.repo_url, path)
+        info = self.get_apk_info(name)
+        if info and 'path' in info:
+            return os.path.join(self.repo_url, info['path'])
 
-    def downloaded_apk_path(self, name):
-        path = self.get_apk_info(name)['path']
-        return os.path.join(self.cache_dir, path)
+    def cached_apk_path(self, name):
+        info = self.get_apk_info(name)
+        if info and 'path' in info:
+            return os.path.join(self.cache_dir, info['path'])
 
     def installed_apk_path(self, name):
         return os.path.join(self.installed_dir, name, name + '.apk')
 
-    def get_downloaded_apk(self, name):
-        dst = self.downloaded_apk_path(name)
-        if os.path.exists(dst):
-            return dst
-        else:
-            src = self.remote_apk_url(name)
-            if self.download_apk(src, dst):
+    def get_cached_apk(self, name):
+        dst = self.cached_apk_path(name)
+        if dst:
+            if self.is_apk_cached(name):
                 return dst
+            else:
+                src = self.remote_apk_url(name)
+                if src and self.download_apk(src, dst):
+                    return dst
+
+    def is_apk_cached(self, name):
+        path = self.cached_apk_path(name)
+        if path and os.path.exists(path):
+            # check the cached file is valid by file size
+            # SHA256 or MD5 is too heavy for such a simple case
+            info = self.get_apk_info(name)
+            if info and 'size' in info:
+                if os.path.getsize(path) == info['size']:
+                    return True
 
     def is_apk_installed(self, name):
         return os.path.exists(self.installed_apk_path(name))
@@ -177,7 +190,7 @@ class Repo:
 
     def install(self, name, reinstall=False):
         self.ensure_dirs()
-        path = self.get_downloaded_apk(name)
+        path = self.get_cached_apk(name)
         logger.debug("install " + name + " from " + str(path))
         if path:
             if self.is_apk_installed(name):
