@@ -305,8 +305,8 @@ class Repo:
         else:
             logger.warning("can't find: " + name)
 
-    def uninstall(self, name, all=False, force=False):
-        if all:
+    def uninstall(self, name, force=False):
+        if name is 'all':
             logger.debug("uninstall all")
             shutil.rmtree(self.installed_dir)
             self._ensure_dirs()
@@ -410,7 +410,7 @@ def main():
             names = ['all']
 
         for name in names:
-            if repo.uninstall(name, all=True if name is 'all' else False, force=args.force):
+            if repo.uninstall(name, force=args.force):
                 print("uninstall " + name + " success")
             else:
                 print("uninstall " + name + " fail")
