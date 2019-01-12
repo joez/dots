@@ -258,7 +258,7 @@ class Repo:
                            self.index_url + ': ' + str(e))
         return self._load_index()
 
-    def search(self, pattern):
+    def search(self, pattern='.'):
         self._ensure_index()
         pat = re.compile(pattern, flags=re.I)
         names = []
@@ -283,7 +283,7 @@ class Repo:
             result.append((n, info))
         return result
 
-    def installed(self, pattern):
+    def installed(self, pattern='.'):
         return filter(lambda x: x[1]['installed'], self.search(pattern))
 
     def install(self, name, reinstall=False):
@@ -306,21 +306,22 @@ class Repo:
             logger.warning("can't find: " + name)
 
     def uninstall(self, name, force=False):
-        if name is 'all':
-            logger.debug("uninstall all")
-            shutil.rmtree(self.installed_dir)
-            self._ensure_dirs()
+        path = self._installed_path(name)
+        logger.debug("uninstall " + name + " at " + path)
+        if os.path.exists(path):
+            shutil.rmtree(os.path.dirname(path))
+            return True
+        elif force:
             return True
         else:
-            path = self._installed_path(name)
-            logger.debug("uninstall " + name + " at " + path)
-            if os.path.exists(path):
-                shutil.rmtree(os.path.dirname(path))
-                return True
-            elif force:
-                return True
-            else:
-                logger.warning("can't find: " + path)
+            logger.warning("can't find: " + path)
+
+    def download(self, name, force=False):
+        if force and self.is_cached(name):
+            logger.debug(name + "is cached, unlink first")
+            os.unlink(self._cached_path(name))
+        if self._get_cached(name):
+            return True
 
 
 def parse_args():
@@ -357,7 +358,10 @@ def parse_args():
     p.add_argument('name', help='apk name or "all"', nargs='+')
     p.add_argument('-f', '--force', action='store_true',
                    help='no error if not found')
-
+    p = subps.add_parser('download', help='download apk into cache')
+    p.add_argument('name', help='apk name or "all"', nargs='+')
+    p.add_argument('-f', '--force', action='store_true',
+                   help='download even if already cached')
     return parser.parse_args()
 
 
@@ -392,10 +396,10 @@ def main():
             print("update fail")
             sys.exit(1)
     elif args.cmd == 'search':
-        result = repo.search(args.pattern)
+        result = repo.search(pattern=args.pattern)
         show_apks(result, verbose=args.verbose)
     elif args.cmd == 'list':
-        result = repo.installed(args.pattern)
+        result = repo.installed(pattern=args.pattern)
         show_apks(result, verbose=args.verbose)
     elif args.cmd == 'install':
         for name in args.name:
@@ -407,13 +411,24 @@ def main():
     elif args.cmd == 'uninstall':
         names = args.name
         if 'all' in args.name:
-            names = ['all']
+            names = [name for name, _ in repo.installed()]
 
         for name in names:
             if repo.uninstall(name, force=args.force):
                 print("uninstall " + name + " success")
             else:
                 print("uninstall " + name + " fail")
+                sys.exit(1)
+    elif args.cmd == 'download':
+        names = args.name
+        if 'all' in args.name:
+            names = [name for name, _ in repo.installed()]
+
+        for name in names:
+            if repo.download(name, force=args.force):
+                print("download " + name + " success")
+            else:
+                print("download " + name + " fail")
                 sys.exit(1)
     else:
         print('no such command')
