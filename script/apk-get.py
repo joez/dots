@@ -168,6 +168,7 @@ class Repo:
             if info and 'size' in info:
                 if os.path.getsize(path) == info['size']:
                     return True
+        return False
 
     def is_installed(self, name):
         return os.path.exists(self._installed_path(name))
@@ -274,12 +275,16 @@ class Repo:
                 if m:
                     names.append(name)
                     break
-        result = [(k, self.index[k], self.is_cached(k), self.is_installed(k))
-                  for k in sorted(names)]
+        result = []
+        for n in sorted(names):
+            info = dict(cached=self.is_cached(
+                n), installed=self.is_installed(n))
+            info.update(self.get_info(n))
+            result.append((n, info))
         return result
 
     def installed(self, pattern):
-        return filter(lambda x: x[3], self.search(pattern))
+        return filter(lambda x: x[1]['installed'], self.search(pattern))
 
     def install(self, name, reinstall=False):
         self._ensure_dirs()
@@ -357,12 +362,18 @@ def parse_args():
 
 
 def show_apks(apk_info, verbose=False):
-    for name, info, *_ in apk_info:
-        if verbose:
-            print(name + ": " + json.dumps(info, ensure_ascii=False, indent=4))
-        else:
-            print("{name:50s} {title:28s}".format(
-                name=name, title=info['title']))
+    if verbose:
+        width = None
+        for name, info in apk_info:
+            if width is None:
+                width = max(list(map(len, info.keys()))) + 1
+            print(name + ":")
+            for k in sorted(info.keys()):
+                print("  {k:{w}} {v!s}".format(k=k+':', v=info[k], w=width))
+            print('')
+    else:
+        for name, info in apk_info:
+            print(name)
 
 
 def main():
