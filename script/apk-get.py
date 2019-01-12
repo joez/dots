@@ -319,13 +319,16 @@ class Repo:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description='A simple package manager for the Android apk', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        description='A simple apk manager', epilog="""It is similiar with the apt-get, 
+        update the manifest from remote repository,
+        search apk in the manifest, download it into the cache and install locally""",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-v', '--version', action='version',
                         version='%(prog)s 0.8.0')
-    parser.add_argument('-u', '--url', help='the remote repository',
+    parser.add_argument('-u', '--url', help='URL of the remote repository',
                         default='http://localhost:3000/')
     parser.add_argument(
-        '-l', '--local', help='the local repository', default='app')
+        '-r', '--root', help='root directory of the local repository', default='app')
 
     subps = parser.add_subparsers(
         dest='cmd', title='supported commands', metavar='COMMAND')
@@ -363,7 +366,7 @@ def show_apks(apk_info, verbose=False):
 
 def main():
     args = parse_args()
-    repo = Repo(url=args.url, root=args.local)
+    repo = Repo(url=args.url, root=args.root)
     if args.cmd == 'clean':
         if repo.clean():
             print("clean success")
