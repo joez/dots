@@ -22,6 +22,76 @@ logger.addHandler(logging.StreamHandler())
 logger.setLevel(logging.INFO)
 
 
+class Progress:
+    file = sys.stderr
+    width = 32
+    suffix = '%(percent)d%%'
+    bar_prefix = ' |'
+    bar_suffix = '| '
+    empty_fill = ' '
+    fill = '#'
+
+    def __init__(self, message='', max=100, **kwargs):
+        self.index = 0
+        self.max = max
+        for key, val in kwargs.items():
+            setattr(self, key, val)
+
+        self.message = message
+
+    def __getitem__(self, key):
+        if key.startswith('_'):
+            return None
+        return getattr(self, key, None)
+
+    @property
+    def progress(self):
+        return min(1, self.index / self.max)
+
+    @property
+    def remaining(self):
+        return max(self.max - self.index, 0)
+
+    @property
+    def percent(self):
+        return self.progress * 100
+
+    def update(self):
+        filled_length = int(self.width * self.progress)
+        empty_length = self.width - filled_length
+
+        message = self.message % self
+        bar = self.fill * filled_length
+        empty = self.empty_fill * empty_length
+        suffix = self.suffix % self
+        line = ''.join([message, self.bar_prefix, bar, empty, self.bar_suffix,
+                        suffix])
+        self.writeln(line)
+
+    def start(self):
+        self.update()
+
+    def writeln(self, line):
+        if self.file:
+            print('\r\x1b[K' + line, end='', file=self.file)
+            self.file.flush()
+
+    def finish(self):
+        if self.file:
+            print(file=self.file)
+
+    def next(self, n=1):
+        self.index = self.index + n
+        self.update()
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.finish()
+
+
 class Repo:
     def __init__(self, url='http://localhost:3000/', root='app'):
         # the remote repository URL
@@ -51,6 +121,11 @@ class Repo:
             if not os.path.exists(d):
                 os.makedirs(d)
 
+    def ensure_parent_dir(self, path):
+        d = os.path.dirname(path)
+        if d and not os.path.exists(d):
+            os.makedirs(d)
+
     def ensure_apk_info(self):
         if not self.apk_info:
             if not self.load_apk_info():
@@ -78,7 +153,10 @@ class Repo:
                 return dst
             else:
                 src = self.remote_apk_url(name)
-                if src and self.download_apk(src, dst):
+                size, info = None, self.get_apk_info(name)
+                if info and 'size' in info:
+                    size = info['size']
+                if src and self.download_apk(src, dst, size=size):
                     return dst
 
     def is_apk_cached(self, name):
@@ -94,16 +172,28 @@ class Repo:
     def is_apk_installed(self, name):
         return os.path.exists(self.installed_apk_path(name))
 
-    def download_apk(self, src, dst):
-        chunk = 1024 * 1024
-        with urllib.request.urlopen(src) as res:
-            d = os.path.dirname(dst)
-            if not os.path.exists(d):
-                os.makedirs(d)
-            logger.info("downloading...")
-            with open(dst, 'wb') as f:
-                shutil.copyfileobj(res, f, chunk)
-        return True
+    def download_apk(self, src, dst, size=None):
+        chunk = 1024 * 256
+        try:
+            with urllib.request.urlopen(src) as res:
+                meta = res.info()
+                logger.debug(meta)
+                self.ensure_parent_dir(dst)
+                length = int(meta.get('Content-Length', '0')
+                             ) if size is None else size
+                blocks = max(length // chunk, 1)
+                prompt = "downloading " + os.path.basename(dst)
+                with Progress(message=prompt, max=blocks) as bar:
+                    with open(dst, 'wb') as f:
+                        while True:
+                            data = res.read(chunk)
+                            if not data:
+                                break
+                            f.write(data)
+                            bar.next()
+            return True
+        except urllib.error.URLError as e:
+            logger.warning('error to download ' + src + ': ' + str(e))
 
     def deploy_apk_lib(self, src, dst):
         if not os.path.exists(dst):
@@ -162,10 +252,12 @@ class Repo:
 
         src = self.repo_url + 'index.json'
         dst = self.manifest
-        with urllib.request.urlopen(src) as res:
-            with open(dst, 'w') as f:
-                f.write(res.read().decode('utf-8'))
-
+        try:
+            with urllib.request.urlopen(src) as res:
+                with open(dst, 'w') as f:
+                    f.write(res.read().decode('utf-8'))
+        except urllib.error.URLError as e:
+            logger.warning('error to download ' + src + ': ' + str(e))
         return self.load_apk_info()
 
     def search(self, pattern):
@@ -201,11 +293,9 @@ class Repo:
                     return
 
             to = self.installed_apk_path(name)
-            d = os.path.dirname(to)
-            if not os.path.exists(d):
-                os.makedirs(d)
+            self.ensure_parent_dir(to)
             os.link(path, to)
-            return self.deploy_apk_lib(to, d)
+            return self.deploy_apk_lib(to, os.path.dirname(to))
         else:
             logger.warning("can't find: " + name)
 
