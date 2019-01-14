@@ -97,9 +97,9 @@ class Repo:
     def __init__(self, index_url='http://localhost:3000/index.json', root_dir='app'):
         logger.debug("index_url: " + index_url + ", root: " + root_dir)
 
-        url = urllib.parse.urlparse(index_url)
         self.index_url = index_url
-        self.repo_url = os.path.dirname(url.path)
+        self.repo_url = index_url[:index_url.rindex('/')+1]
+        logger.debug("repo_url: " + self.repo_url)
 
         # the local repository
         self.root_dir = root_dir
