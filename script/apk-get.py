@@ -3,15 +3,17 @@
 
 import argparse
 import logging
-import subprocess
-import re
-import sys
 import json
 import os
-import urllib.request
-import urllib.parse
+import re
+import sys
 import shutil
 import zipfile
+
+from contextlib import contextmanager
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from urllib.request import urlopen
+from urllib.error import URLError
 
 # hack here to ensure the current locale supports unicode correctly
 import locale
@@ -176,7 +178,7 @@ class Repo:
     def _download(self, src, dst, size=None):
         chunk = 1024 * 256
         try:
-            with urllib.request.urlopen(src) as res:
+            with urlopen(src) as res:
                 info = res.info()
                 logger.debug(info)
                 self._ensure_parent_dir(dst)
@@ -193,7 +195,7 @@ class Repo:
                             f.write(data)
                             bar.next()
             return True
-        except urllib.error.URLError as e:
+        except URLError as e:
             logger.warning('error to download ' + src + ': ' + str(e))
 
     def _deploy_lib(self, apk):
@@ -250,10 +252,10 @@ class Repo:
     def update(self):
         self._ensure_dirs()
         try:
-            with urllib.request.urlopen(self.index_url) as res:
+            with urlopen(self.index_url) as res:
                 with open(self.index_file, 'w') as f:
                     f.write(res.read().decode('utf-8'))
-        except urllib.error.URLError as e:
+        except URLError as e:
             logger.warning('error to download ' +
                            self.index_url + ': ' + str(e))
         return self._load_index()
@@ -317,11 +319,54 @@ class Repo:
             logger.warning("can't find: " + path)
 
     def download(self, name, force=False):
+        self._ensure_dirs()
         if force and self.is_cached(name):
             logger.debug(name + "is cached, unlink first")
             os.unlink(self._cached_path(name))
         if self._get_cached(name):
             return True
+
+
+@contextmanager
+def cd(newdir):
+    prevdir = os.getcwd()
+    os.chdir(os.path.expanduser(newdir))
+    try:
+        yield
+    finally:
+        os.chdir(prevdir)
+
+
+def serve_dir(directory, bind='', port=3000):
+    """Serve the directory as a HTTP web server
+
+    It is not recommended for production
+    """
+    address = (bind, port)
+    with cd(directory):
+        with HTTPServer(address, SimpleHTTPRequestHandler) as httpd:
+            sa = httpd.socket.getsockname()
+            msg = "Serving HTTP on http://{host}:{port} for {root} ..."
+            print(msg.format(host=sa[0], port=sa[1], root=directory))
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                sys.exit(0)
+
+
+def show_apks(apk_info, verbose=False):
+    if verbose:
+        width = None
+        for name, info in apk_info:
+            if width is None:
+                width = max(list(map(len, info.keys()))) + 1
+            print(name + ":")
+            for k in sorted(info.keys()):
+                print("  {k:{w}} {v!s}".format(k=k+':', v=info[k], w=width))
+            print('')
+    else:
+        for name, info in apk_info:
+            print(name)
 
 
 def parse_args():
@@ -362,22 +407,13 @@ def parse_args():
     p.add_argument('name', help='apk name or "all"', nargs='+')
     p.add_argument('-f', '--force', action='store_true',
                    help='download even if already cached')
+    p = subps.add_parser(
+        'serve', help='serve the cache as a remote repository')
+    p.add_argument('-p', '--port', help='port number', type=int, default=3000)
+    p.add_argument('-b', '--bind', help='bind address',
+                   metavar='ADDRESS', default='')
+
     return parser.parse_args()
-
-
-def show_apks(apk_info, verbose=False):
-    if verbose:
-        width = None
-        for name, info in apk_info:
-            if width is None:
-                width = max(list(map(len, info.keys()))) + 1
-            print(name + ":")
-            for k in sorted(info.keys()):
-                print("  {k:{w}} {v!s}".format(k=k+':', v=info[k], w=width))
-            print('')
-    else:
-        for name, info in apk_info:
-            print(name)
 
 
 def main():
@@ -430,6 +466,8 @@ def main():
             else:
                 print("download " + name + " fail")
                 sys.exit(1)
+    elif args.cmd == 'serve':
+        serve_dir(repo.cache_dir, bind=args.bind, port=args.port)
     else:
         print('no such command')
         sys.exit(1)
