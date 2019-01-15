@@ -239,8 +239,12 @@ def main():
             info = get_apk_info(src)
             name = '-'.join([info[k] for k in ['package', 'version']]) + '.apk'
             if name in seen:
-                logger.warning(
-                    'duplicated {}, already found {}, skip'.format(name, seen[name]))
+                logger.warning('duplicated {name}, already found {old}\ndelete {new}'.format(
+                    name=name, old=seen[name], new=src))
+                try:
+                    os.unlink(src)
+                except os.error:
+                    logger.warning('fail to delete, skip')
             else:
                 dst = os.path.join(os.path.dirname(src), name)
                 if src == dst:
