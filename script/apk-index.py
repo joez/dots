@@ -174,6 +174,7 @@ def save_index(meta, path):
         </div>
     </div>
 
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" crossorigin="anonymous"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/js/bootstrap.min.js" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/tabulator-tables@4.1.4/dist/js/tabulator.min.js"></script>
 
@@ -213,6 +214,7 @@ def save_index(meta, path):
             table.download("xlsx", "apk-index.xlsx", { sheetName: "data" });
         };
     </script>
+
     <script src="http://oss.sheetjs.com/js-xlsx/xlsx.full.min.js"></script>
 
 </body>
