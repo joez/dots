@@ -33,7 +33,7 @@ as a web server (it is not recommended for production):
 python -m http.server 3000
 """, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("-v", "--version", action="version",
-                    version="%(prog)s 0.1.0")
+                    version="%(prog)s 0.9.0")
 parser.add_argument("-r", "--root",
                     help="the root directory of the index (default: .)", default=".")
 parser.add_argument("path", help="apk file or directory", nargs="+")
