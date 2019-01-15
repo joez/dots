@@ -20,15 +20,23 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler())
 logger.setLevel(logging.INFO)
 
-parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, description="""
-check the APK information by 'aapt' and unify the file name with
-the format '<package>-<version>.apk', and output a index file to
-store the information, such as package name, version, title, etc.""")
+parser = argparse.ArgumentParser(description="""
+A simple apk index tool
+
+Parse the apk information by 'aapt' and unify the file name with
+the format '<package>-<version>.apk', and generate a index file to
+store the information, such as package name, version, title, etc.
+""", epilog="""
+You can run the following command to serve the current directory
+as a web server (it is not recommended for production):
+
+python -m http.server 3000
+""", formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("-v", "--version", action="version",
                     version="%(prog)s 0.1.0")
-parser.add_argument("-o", "--output",
-                    help="the output folder for the index file (default: .)", default=".")
-parser.add_argument("apk", help="APK file or directory", nargs="+")
+parser.add_argument("-r", "--root",
+                    help="the root directory of the index (default: .)", default=".")
+parser.add_argument("path", help="apk file or directory", nargs="+")
 
 
 def sh(cmd):
@@ -151,7 +159,7 @@ def save_index(meta, path):
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css" crossorigin="anonymous">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabulator/4.1.4/css/bootstrap/tabulator_bootstrap4.min.css">
 
-    <title>APK info</title>
+    <title>apk index</title>
 </head>
 
 <body>
@@ -196,13 +204,13 @@ def save_index(meta, path):
             ],
         });
         document.getElementById("download-csv").onclick = function () {
-            table.download("csv", "apk-info.csv");
+            table.download("csv", "apk-index.csv");
         };
         document.getElementById("download-json").onclick = function () {
-            table.download("json", "apk-info.json");
+            table.download("json", "apk-index.json");
         };
         document.getElementById("download-xlsx").onclick = function () {
-            table.download("xlsx", "apk-info.xlsx", { sheetName: "data" });
+            table.download("xlsx", "apk-index.xlsx", { sheetName: "data" });
         };
     </script>
     <script src="http://oss.sheetjs.com/js-xlsx/xlsx.full.min.js"></script>
@@ -225,8 +233,8 @@ def main():
     else:
         meta = {}
         seen = {}
-        out = args.output
-        for src in find_apk(args.apk):
+        out = args.root
+        for src in find_apk(args.path):
             logger.info('processing apk: ' + src)
             info = get_apk_info(src)
             name = '-'.join([info[k] for k in ['package', 'version']]) + '.apk'
