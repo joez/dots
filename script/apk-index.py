@@ -63,7 +63,7 @@ def clean(s):
 def get_apk_info(path):
     logger.debug('get_apk_info: ' + path)
 
-    info = {'launchable': []}
+    info = {'launchable': [], 'jnilib': []}
     info['size'] = os.path.getsize(path)
 
     cmd = ['aapt', 'd', 'badging', path]
@@ -100,6 +100,12 @@ def get_apk_info(path):
                     info['launchable'].append(clean(v))
                     # enough for us to get one
                     break
+            continue
+
+        m = re.match(r"native-code:\s*(.+)$", l)
+        if m:
+            for abi in re.split(r'\s+', m.group(1)):
+                info['jnilib'].append(clean(abi))
             continue
 
     logger.debug(json.dumps(info, sort_keys=True, ensure_ascii=False))
@@ -201,6 +207,7 @@ def save_index(meta, path):
                 { title: "Version", field: "version", headerFilter: true },
                 { title: "File", field: "path", formatter: "link", formatterParams: { urlField: "path" }, headerFilter: true },
                 { title: "Size", field: "size", formatter: format_size, align: "right" },
+                { title: "JNILib", field: "jnilib", headerFilter: true },
                 { title: "Launchable", field: "launchable", headerFilter: true },
             ],
         });
