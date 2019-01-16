@@ -277,10 +277,9 @@ class Repo:
                     break
         result = []
         for n in sorted(names):
-            info = dict(cached=self.is_cached(
-                n), installed=self.is_installed(n))
-            info.update(self.get_info(n))
-            result.append((n, info))
+            i = dict(cached=self.is_cached(n), installed=self.is_installed(n))
+            i.update(self.get_info(n))
+            result.append((n, i))
         return result
 
     def installed(self, pattern='.'):
@@ -352,8 +351,11 @@ def serve_dir(directory, bind='', port=3000):
                 sys.exit(0)
 
 
-def show_apks(apk_info, verbose=False):
-    if verbose:
+def show_apks(apk_info, pretty='default'):
+    if pretty in ['s', 'short']:
+        for name, _ in apk_info:
+            print(name)
+    elif pretty == ['v', 'verbose']:
         width = None
         for name, info in apk_info:
             if width is None:
@@ -364,15 +366,20 @@ def show_apks(apk_info, verbose=False):
             print('')
     else:
         for name, info in apk_info:
-            print(name)
+            stat = 'c' if info['cached'] else ' '
+            if info['installed']:
+                stat = stat + 'i'
+            print("{n:48} {s:2} {t:28}".format(
+                n=name, s=stat, t=info['title']))
 
 
 def parse_args():
+    fmt = argparse.ArgumentDefaultsHelpFormatter
     parser = argparse.ArgumentParser(
         description='A simple apk manager', epilog="""It is similiar with the apt-get, 
         update the index from remote repository,
         search apk in the index, download it into the cache and install locally""",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        formatter_class=fmt)
     parser.add_argument('-v', '--version', action='version',
                         version='%(prog)s 0.9.0')
     parser.add_argument('-i', '--index', help='index URL at the remote repository',
@@ -383,30 +390,33 @@ def parse_args():
     subps = parser.add_subparsers(
         dest='cmd', title='supported commands', metavar='COMMAND')
 
-    p = subps.add_parser('clean', help='clean the cache')
-    p = subps.add_parser('update', help='update index')
-    p = subps.add_parser('search', help='search apk')
+    p = subps.add_parser('clean', help='clean the cache', formatter_class=fmt)
+    p = subps.add_parser('update', help='update index', formatter_class=fmt)
+    p = subps.add_parser('search', help='search apk', formatter_class=fmt)
     p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
-    p.add_argument('-v', '--verbose', action='store_true',
-                   help='more information')
-    p = subps.add_parser('list', help='list installed apk')
+    p.add_argument('-p', '--pretty', help='output format',
+                   choices=['s', 'short', 'd', 'default', 'v', 'verbose'], default='d')
+    p = subps.add_parser(
+        'list', help='list installed apk', formatter_class=fmt)
     p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
-    p.add_argument('-v', '--verbose', action='store_true',
-                   help='more information')
-    p = subps.add_parser('install', help='install apk')
+    p.add_argument('-p', '--pretty', help='output format',
+                   choices=['s', 'short', 'd', 'default', 'v', 'verbose'], default='d')
+    p = subps.add_parser('install', help='install apk', formatter_class=fmt)
     p.add_argument('name', help='apk name', nargs='+')
     p.add_argument('-r', '--reinstall', action='store_true',
                    help='reinstall if necessary')
-    p = subps.add_parser('uninstall', help='uninstall apk')
+    p = subps.add_parser(
+        'uninstall', help='uninstall apk', formatter_class=fmt)
     p.add_argument('name', help='apk name or "all"', nargs='+')
     p.add_argument('-f', '--force', action='store_true',
                    help='no error if not found')
-    p = subps.add_parser('download', help='download apk into cache')
+    p = subps.add_parser(
+        'download', help='download apk into cache', formatter_class=fmt)
     p.add_argument('name', help='apk name or "all"', nargs='+')
     p.add_argument('-f', '--force', action='store_true',
                    help='download even if already cached')
     p = subps.add_parser(
-        'serve', help='serve the cache as a remote repository')
+        'serve', help='serve the cache as a remote repository', formatter_class=fmt)
     p.add_argument('-p', '--port', help='port number', type=int, default=3000)
     p.add_argument('-b', '--bind', help='bind address',
                    metavar='ADDRESS', default='')
@@ -431,10 +441,10 @@ def main():
             sys.exit(1)
     elif args.cmd == 'search':
         result = repo.search(pattern=args.pattern)
-        show_apks(result, verbose=args.verbose)
+        show_apks(result, pretty=args.pretty)
     elif args.cmd == 'list':
         result = repo.installed(pattern=args.pattern)
-        show_apks(result, verbose=args.verbose)
+        show_apks(result, pretty=args.pretty)
     elif args.cmd == 'install':
         for name in args.name:
             if repo.install(name, reinstall=args.reinstall):
