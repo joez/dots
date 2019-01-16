@@ -105,7 +105,9 @@ def get_apk_info(path):
         m = re.match(r"native-code:\s*(.+)$", l)
         if m:
             for abi in re.split(r'\s+', m.group(1)):
-                info['jnilib'].append(clean(abi))
+                v = clean(abi)
+                if v:
+                    info['jnilib'].append(v)
             continue
 
     logger.debug(json.dumps(info, sort_keys=True, ensure_ascii=False))
