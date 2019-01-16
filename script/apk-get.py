@@ -179,11 +179,9 @@ class Repo:
         chunk = 1024 * 256
         try:
             with urlopen(src) as res:
-                info = res.info()
-                logger.debug(info)
+                logger.debug(str(res.info()))
                 self._ensure_parent_dir(dst)
-                length = int(info.get('Content-Length', '0')
-                             ) if size is None else size
+                length = res.length if size is None else size
                 blocks = max(length // chunk, 1)
                 prompt = "downloading " + os.path.basename(dst)
                 with Progress(message=prompt, max=blocks) as bar:
@@ -458,7 +456,7 @@ def main():
     elif args.cmd == 'download':
         names = args.name
         if 'all' in args.name:
-            names = [name for name, _ in repo.installed()]
+            names = [name for name, _ in repo.search()]
 
         for name in names:
             if repo.download(name, force=args.force):
