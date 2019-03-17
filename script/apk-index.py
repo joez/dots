@@ -82,12 +82,16 @@ def get_apk_info(path):
         m = re.match(r"package:\s*(.+)$", l)
         if m:
             for attr in re.split(r'\s+', m.group(1)):
-                k, v = attr.split('=', 2)
-                if k == 'name':
-                    info['package'] = clean(v)
-                    continue
-                elif k == 'versionName':
-                    info['version'] = clean(v)
+                try:
+                    k, v = attr.split('=', 2)
+                    if k == 'name':
+                        info['package'] = clean(v)
+                        continue
+                    elif k == 'versionName':
+                        info['version'] = clean(v)
+                        continue
+                except ValueError:
+                    logger.warning('fail to parse, skip: ' + attr)
                     continue
             continue
 
