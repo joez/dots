@@ -256,6 +256,7 @@ class Repo:
         except URLError as e:
             logger.warning('error to download ' +
                            self.index_url + ': ' + str(e))
+            return
         return self._load_index()
 
     def search(self, pattern='.'):
