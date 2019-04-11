@@ -113,10 +113,11 @@ class Repo:
         self.index = {}
 
         # see also: libcore/libart/src/main/java/dalvik/system/VMRuntime.java
-        self.abi2isa = {'x86': 'x86', 'x86_64': 'x86_64',
-                        'armeabi': 'arm', 'armeabi-v7a': 'arm', 'arm64-v8a': 'arm64'}
+        self.abi2isa = {'x86': 'x86', 'x86_64': 'x86_64', 'armeabi': 'arm',
+                        'armeabi-v7a': 'arm', 'arm64-v8a': 'arm64', 'mips': 'mips', 'mips64': 'mips64'}
+        # the order matters, if several abis map to the same isa, first come first serve
         self.abis = ['x86', 'x86_64', 'armeabi',
-                     'armeabi-v7a', 'arm64-v8a']  # the order matters
+                     'armeabi-v7a', 'arm64-v8a', 'mips', 'mips64']
 
     def _ensure_dirs(self):
         for d in (self.root_dir, self.cache_dir, self.installed_dir):
@@ -196,7 +197,7 @@ class Repo:
         except URLError as e:
             logger.warning('error to download ' + src + ': ' + str(e))
 
-    def _deploy_lib(self, apk):
+    def _deploy_lib(self, apk, abis):
         d = os.path.dirname(apk)
         with zipfile.ZipFile(apk) as zf:
             for f in zf.namelist():
@@ -204,7 +205,12 @@ class Repo:
                     zf.extract(f, d)
         # convert ABI to ISA
         for abi in self.abis:
-            if abi in self.abi2isa:
+            if abi not in abis:
+                lib_dir = os.path.join(d, 'lib', abi)
+                if os.path.exists(lib_dir):
+                    shutil.rmtree(lib_dir)
+                    logger.info("ABI " + abi + ' is not wanted, removed')
+            elif abi in self.abi2isa:
                 isa = self.abi2isa[abi]
                 if abi != isa:
                     abi_dir = os.path.join(d, 'lib', abi)
@@ -286,7 +292,10 @@ class Repo:
     def installed(self, pattern='.'):
         return filter(lambda x: x[1]['installed'], self.search(pattern))
 
-    def install(self, name, reinstall=False):
+    def install(self, name, reinstall=False, abis=['all']):
+        if 'all' in abis:
+            abis = self.abis[:]
+
         self._ensure_dirs()
         path = self._get_cached(name)
         logger.debug("install " + name + " from " + str(path))
@@ -301,7 +310,7 @@ class Repo:
             to = self._installed_path(name)
             self._ensure_parent_dir(to)
             os.link(path, to)
-            return self._deploy_lib(to)
+            return self._deploy_lib(to, abis)
         else:
             logger.warning("can't find: " + name)
 
@@ -404,6 +413,7 @@ def parse_args():
                    choices=['s', 'short', 'd', 'default', 'v', 'verbose'], default='d')
     p = subps.add_parser('install', help='install apk', formatter_class=fmt)
     p.add_argument('name', help='apk name', nargs='+')
+    p.add_argument('-a', '--abis', help='abis separated by ","', default='all')
     p.add_argument('-r', '--reinstall', action='store_true',
                    help='reinstall if necessary')
     p = subps.add_parser(
@@ -447,8 +457,9 @@ def main():
         result = repo.installed(pattern=args.pattern)
         show_apks(result, pretty=args.pretty)
     elif args.cmd == 'install':
+        abis = [abi.strip() for abi in args.abis.split(',')]
         for name in args.name:
-            if repo.install(name, reinstall=args.reinstall):
+            if repo.install(name, reinstall=args.reinstall, abis=abis):
                 print("install " + name + " success")
             else:
                 print("install " + name + " fail")
