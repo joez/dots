@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # author: joe.zheng
 
 import argparse
@@ -30,7 +30,7 @@ store the information, such as package name, version, title, etc.
 You can run the following command to serve the current directory
 as a web server (it is not recommended for production):
 
-python -m http.server 3000
+python3 -m http.server 3000
 """, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("-v", "--version", action="version",
                     version="%(prog)s 0.9.0")
