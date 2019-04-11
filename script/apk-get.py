@@ -391,7 +391,7 @@ def parse_args():
         search apk in the index, download it into the cache and install locally""",
         formatter_class=fmt)
     parser.add_argument('-v', '--version', action='version',
-                        version='%(prog)s 0.9.0')
+                        version='%(prog)s 0.9.1')
     parser.add_argument('-i', '--index', help='index URL at the remote repository',
                         default='http://localhost:3000/index.json')
     parser.add_argument(
