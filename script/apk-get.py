@@ -356,7 +356,7 @@ def show_apks(apk_info, pretty='default'):
     if pretty in ['s', 'short']:
         for name, _ in apk_info:
             print(name)
-    elif pretty == ['v', 'verbose']:
+    elif pretty in ['v', 'verbose']:
         width = None
         for name, info in apk_info:
             if width is None:
