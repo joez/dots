@@ -361,7 +361,14 @@ def serve_dir(directory, bind='', port=3000):
                 sys.exit(0)
 
 
-def show_apks(apk_info, pretty='default'):
+def show_apks(apk_info, pretty='default', format=None):
+    # user defined format has the higher priority
+    if format:
+        for name, info in apk_info:
+            print(format.format(**info, name=name))
+        return
+
+    # and then the predefined format
     if pretty in ['s', 'short']:
         for name, _ in apk_info:
             print(name)
@@ -402,15 +409,17 @@ def parse_args():
 
     p = subps.add_parser('clean', help='clean the cache', formatter_class=fmt)
     p = subps.add_parser('update', help='update index', formatter_class=fmt)
-    p = subps.add_parser('search', help='search apk', formatter_class=fmt)
-    p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
-    p.add_argument('-p', '--pretty', help='output format',
-                   choices=['s', 'short', 'd', 'default', 'v', 'verbose'], default='d')
-    p = subps.add_parser(
-        'list', help='list installed apk', formatter_class=fmt)
-    p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
-    p.add_argument('-p', '--pretty', help='output format',
-                   choices=['s', 'short', 'd', 'default', 'v', 'verbose'], default='d')
+
+    def add_query_args(p):
+        p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
+        p.add_argument('-f', '--format',
+                    help='user defined format in Python syntax, overrides -p', default=None)
+        p.add_argument('-p', '--pretty', help='predefined output format',
+                    choices=['s', 'short', 'd', 'default', 'v', 'verbose'], default='d')
+
+    add_query_args(subps.add_parser('search', help='search apk', formatter_class=fmt))
+    add_query_args(subps.add_parser('list', help='list installed apk', formatter_class=fmt))
+
     p = subps.add_parser('install', help='install apk', formatter_class=fmt)
     p.add_argument('name', help='apk name', nargs='+')
     p.add_argument('-a', '--abis', help='abis separated by ","', default='all')
@@ -452,10 +461,10 @@ def main():
             sys.exit(1)
     elif args.cmd == 'search':
         result = repo.search(pattern=args.pattern)
-        show_apks(result, pretty=args.pretty)
+        show_apks(result, pretty=args.pretty, format=args.format)
     elif args.cmd == 'list':
         result = repo.installed(pattern=args.pattern)
-        show_apks(result, pretty=args.pretty)
+        show_apks(result, pretty=args.pretty, format=args.format)
     elif args.cmd == 'install':
         abis = [abi.strip() for abi in args.abis.split(',')]
         for name in args.name:
