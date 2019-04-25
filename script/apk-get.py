@@ -344,6 +344,15 @@ def cd(newdir):
         os.chdir(prevdir)
 
 
+@contextmanager
+def new_server(address, handler):
+    httpd = HTTPServer(address, handler)
+    try:
+        yield httpd
+    finally:
+        httpd.server_close()
+
+
 def serve_dir(directory, bind='', port=3000):
     """Serve the directory as a HTTP web server
 
@@ -351,7 +360,7 @@ def serve_dir(directory, bind='', port=3000):
     """
     address = (bind, port)
     with cd(directory):
-        with HTTPServer(address, SimpleHTTPRequestHandler) as httpd:
+        with new_server(address, SimpleHTTPRequestHandler) as httpd:
             sa = httpd.socket.getsockname()
             msg = "Serving HTTP on http://{host}:{port} for {root} ..."
             print(msg.format(host=sa[0], port=sa[1], root=directory))
@@ -413,12 +422,14 @@ def parse_args():
     def add_query_args(p):
         p.add_argument('pattern', help='regex pattern', default='.', nargs='?')
         p.add_argument('-f', '--format',
-                    help='user defined format in Python syntax, overrides -p', default=None)
+                       help='user defined format in Python syntax, overrides -p', default=None)
         p.add_argument('-p', '--pretty', help='predefined output format',
-                    choices=['s', 'short', 'd', 'default', 'v', 'verbose'], default='d')
+                       choices=['s', 'short', 'd', 'default', 'v', 'verbose'], default='d')
 
-    add_query_args(subps.add_parser('search', help='search apk', formatter_class=fmt))
-    add_query_args(subps.add_parser('list', help='list installed apk', formatter_class=fmt))
+    add_query_args(subps.add_parser(
+        'search', help='search apk', formatter_class=fmt))
+    add_query_args(subps.add_parser(
+        'list', help='list installed apk', formatter_class=fmt))
 
     p = subps.add_parser('install', help='install apk', formatter_class=fmt)
     p.add_argument('name', help='apk name', nargs='+')
