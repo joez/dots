@@ -36,7 +36,8 @@ parser.add_argument("-v", "--version", action="version",
                     version="%(prog)s 0.9.1")
 parser.add_argument("-r", "--root",
                     help="the root directory of the index (default: .)", default=".")
-parser.add_argument("-l", "--latest", action='store_true', help="delete the old versions")
+parser.add_argument("-d", "--delete-old", action='store_true',
+                    help="keep the latest version only for each package, delete the old ones")
 parser.add_argument("path", help="apk file or directory", nargs="+")
 
 
@@ -253,8 +254,8 @@ def main():
         meta = {}
         seen = {}
         out = args.root
-        latest_only = args.latest
-        latest_version = {} # package mapping to vercode and name
+        delete_old = args.delete_old
+        latest_pkg = {}
         for src in find_apk(args.path):
             logger.info('processing apk: ' + src)
             info = get_apk_info(src)
@@ -280,24 +281,26 @@ def main():
                         continue
 
                 pkg = info['package']
-                if latest_only and pkg in latest_version:
-                    latest = latest_version[pkg]
+                if delete_old and pkg in latest_pkg:
+                    latest = latest_pkg[pkg]
                     if info['vercode'] > latest['vercode']:
                         old = latest['name']
                         path = seen[old]
-                        logger.info('find new verison, delete old one: {}'.format(path))
+                        logger.info(
+                            'new verison, delete old one: {}'.format(path))
                         os.unlink(path)
                         del meta[old]
                         del seen[old]
                     else:
-                        logger.info('already has new version, delete and skip: {}'.format(dst))
+                        logger.info(
+                            'old version, delete and skip: {}'.format(dst))
                         os.unlink(dst)
                         continue
 
                 meta[name] = info
                 seen[name] = dst
-                if latest_only:
-                    latest_version[pkg] = dict(name=name, vercode=info['vercode'])
+                if delete_old:
+                    latest_pkg[pkg] = dict(name=name, vercode=info['vercode'])
                 # add path relative to the index file
                 info['path'] = os.path.relpath(dst, start=out)
 
