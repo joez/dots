@@ -260,25 +260,20 @@ def main():
             logger.info('processing apk: ' + src)
             info = get_apk_info(src)
             name = '-'.join([info[k] for k in ['package', 'version']]) + '.apk'
+            dst = os.path.join(os.path.dirname(src), name)
 
             if name in seen:
-                logger.warning('duplicated {name}, already found {old}\ndelete {new}'.format(
-                    name=name, old=seen[name], new=src))
-                try:
-                    os.unlink(src)
-                except os.error:
-                    logger.warning('fail to delete, skip')
+                old = seen[name]
+                logger.warning('duplicated one, already found {}'.format(old))
+                os.unlink(src)
+                os.symlink(os.path.relpath(old, os.path.dirname(dst)), dst)
+                logger.info('replaced with link: {}'.format(dst))
             else:
-                dst = os.path.join(os.path.dirname(src), name)
                 if src == dst:
                     logger.info('no need to rename')
                 else:
-                    try:
-                        os.rename(src, dst)
-                        logger.info('renamed to ' + dst)
-                    except os.error:
-                        logger.warning('fail to rename, skip')
-                        continue
+                    os.rename(src, dst)
+                    logger.info('renamed to ' + dst)
 
                 pkg = info['package']
                 if delete_old and pkg in latest_pkg:
