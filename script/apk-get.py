@@ -265,7 +265,19 @@ class Repo:
             return
         return self._load_index()
 
-    def search(self, pattern='.'):
+    def _get_latest(self, names):
+        latest = {}  # package: {name, vercode}
+        for n in names:
+            i = self.get_info(n)
+            p = i['package']
+            if p in latest:
+                l = latest[p]
+                if i['vercode'] < l['vercode']:
+                    continue
+            latest[p] = dict(name=n, vercode=i['vercode'])
+        return [v['name'] for v in latest.values()]
+
+    def search(self, pattern='.', name_only=False, latest=False, installed=False):
         self._ensure_index()
         pat = re.compile(pattern, flags=re.I)
         names = []
@@ -275,22 +287,28 @@ class Repo:
             if m:
                 names.append(name)
                 continue
-
             # search the other fields
-            for f in ("title", "path"):
-                m = pat.search(info[f])
-                if m:
-                    names.append(name)
-                    break
+            if not name_only:
+                for f in ("title", "path"):
+                    m = pat.search(info[f])
+                    if m:
+                        names.append(name)
+                        break
+
         result = []
         for n in sorted(names):
             i = dict(cached=self.is_cached(n), installed=self.is_installed(n))
+            if installed and not i['installed']:
+                continue
             i.update(self.get_info(n))
             result.append((n, i))
+        if latest:
+            wanted = {k: 1 for k in self._get_latest(n for n, _ in result)}
+            result = [i for i in result if i[0] in wanted]
         return result
 
-    def installed(self, pattern='.'):
-        return filter(lambda x: x[1]['installed'], self.search(pattern))
+    def installed(self, pattern='.', name_only=False, latest=False):
+        return self.search(pattern, name_only=name_only, latest=latest, installed=True)
 
     def install(self, name, reinstall=False, abis=['all']):
         if 'all' in abis:
@@ -455,6 +473,16 @@ def parse_args():
     return parser.parse_args()
 
 
+def expand_name(repo, name, installed=False):
+    if not repo.get_info(name):
+        info = repo.search(name, name_only=True,
+                           latest=True, installed=installed)
+        # only expand name when only one result
+        if len(info) == 1:
+            name, _ = info[0]
+    return name
+
+
 def main():
     args = parse_args()
     repo = Repo(index_url=args.index, root_dir=args.root)
@@ -479,6 +507,7 @@ def main():
     elif args.cmd == 'install':
         abis = [abi.strip() for abi in args.abis.split(',')]
         for name in args.name:
+            name = expand_name(repo, name)
             if repo.install(name, reinstall=args.reinstall, abis=abis):
                 print("install " + name + " success")
             else:
@@ -488,7 +517,8 @@ def main():
         names = args.name
         if 'all' in args.name:
             names = [name for name, _ in repo.installed()]
-
+        else:
+            names = [expand_name(repo, n, installed=True) for n in names]
         for name in names:
             if repo.uninstall(name, force=args.force):
                 print("uninstall " + name + " success")
@@ -499,7 +529,8 @@ def main():
         names = args.name
         if 'all' in args.name:
             names = [name for name, _ in repo.search()]
-
+        else:
+            names = [expand_name(repo, n) for n in names]
         for name in names:
             if repo.download(name, force=args.force):
                 print("download " + name + " success")
