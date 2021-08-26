@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 21.7.19
+# version: 21.8.26
 
 set -e
 
@@ -50,6 +50,26 @@ Usage: $SELF [-a <addr>] [-s <sans>] [-m <opt>] [-v <ver>] [-r] [-R] [-C] [-W] [
   -W:        do not schedule workload on master node, default: $NO_WORKLOAD
   -n:        dry run, print out information only, default: $DRY_RUN
   -h:        print the usage message
+
+Examples:
+
+  1. Deploy a single node cluster
+     $SELF
+
+  2. Reset the cluster and deploy again
+     $SELF -r
+
+  3. Reset the cluster and deploy again with specific version
+     $SELF -r -v 1.21.0
+
+  4. Deploy a cluster with one master and one worker node
+     # on master node
+     $SELF -W
+     # check the output command for "kubeadm join"
+
+     # on worker node
+     $SELF -C
+     # use "kubeadm join" command to join the cluster
 EOF
 
 }
