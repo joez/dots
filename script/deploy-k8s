@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 21.8.26
+# version: 21.11.26
 
 set -e
 
@@ -14,6 +14,7 @@ if [[ "$(id -u)" == "0" ]] || id -nG | grep -qw docker; then
   DOCKER="docker"
 fi
 
+K8S_NOPROXY=".svc,.svc.cluster.local"
 K8S_PKGS="kubelet kubeadm kubectl"
 
 ADDRESS=$HOST_IP      # API server address
@@ -372,6 +373,16 @@ function init_cluster() {
     extra="$extra --image-repository $repo"
     msg "mirror is required, use image repository: $repo"
   fi
+
+  # patch proxy env vars
+  for e in no_proxy NO_PROXY
+  do
+    if [[ -n ${!e} ]]; then
+      msg "patch $e: $K8S_NOPROXY,$cidr"
+      eval $e="$K8S_NOPROXY,$cidr,${!e}"
+    fi
+  done
+
   sudo kubeadm init --kubernetes-version=$VERSION --apiserver-advertise-address=$ADDRESS --pod-network-cidr=$cidr $extra
 
   # config
