@@ -28,6 +28,7 @@ DRY_RUN=n             # dry run or not
 OFFLINE=n             # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
+CACHE="cache"         # the cache directory
 
 function msg() {
   echo "> $@"
@@ -115,6 +116,7 @@ done
 function main() {
   ensure_nonroot
   check_prerequisites
+  ensure_workdir
   ensure_swapoff
   ensure_iptables
   ensure_firewalloff
@@ -346,6 +348,14 @@ function ensure_nonroot() {
   fi
 }
 
+function ensure_workdir() {
+  msg "ensure workdir"
+  if [[ ! -d $CACHE ]]; then
+    msg "create dir: $CACHE"
+    mkdir -p $CACHE
+  fi
+}
+
 function reset_cluster() {
   msg "reset cluster"
   sudo kubeadm reset
@@ -368,10 +378,16 @@ function init_cluster() {
 
   [[ $OFFLINE == "y" ]] && msg "WARNING: offline mode, cache must be ready"
 
+  local yaml="$CACHE/kube-flannel.yml"
+  msg "download flannel manifest"
+  if [[ ! -e $yaml ]]; then
+    curl https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml > $yaml
+  fi
+
   # different CNI addon requires different pod-network-cider, here is for flannel
-  local cidr="10.244.0.0/16"
+  local cidr=$(perl -ne 'print $1 if /"Network":\s*"([^"]+)"/' $CACHE/kube-flannel.yml)
+
   local extra=
-  msg "init k8s control-plane node, api:$ADDRESS, cidr:$cidr"
   if [[ -n $SANS ]]; then
     extra="$extra --apiserver-cert-extra-sans=$SANS"
   fi
@@ -393,6 +409,7 @@ function init_cluster() {
     fi
   done
 
+  msg "init k8s control-plane node, ver:$VERSION, api:$ADDRESS, cidr:$cidr, extra:'$extra'"
   sudo kubeadm init --kubernetes-version=$VERSION --apiserver-advertise-address=$ADDRESS --pod-network-cidr=$cidr $extra
 
   # config
@@ -409,9 +426,6 @@ function init_cluster() {
 
   # install flannel to manage the network
   msg "install flannel"
-  if [[ ! -e kube-flannel.yml ]]; then
-    curl -O https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
-  fi
   kubectl apply -f kube-flannel.yml
 }
 
