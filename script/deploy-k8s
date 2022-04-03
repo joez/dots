@@ -28,7 +28,9 @@ DRY_RUN=n             # dry run or not
 OFFLINE=n             # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
-CACHE="cache"         # the cache directory
+
+CACHE="cache"              # the cache directory
+CACHE_IMAGE="$CACHE/image" # script to save or load images
 
 function msg() {
   echo "> $@"
@@ -42,7 +44,8 @@ function usage() {
   cat <<EOF
 Usage: $SELF [-a <addr>] [-e <addr>] [-s <sans>] [-m <opt>] [-v <ver>]
   [-r] [-R] [-C] [-W] [-n] [-h]
-  Deploy k8s and initialize cluster for local development purpose
+
+  Deploy Kubernetes and initialize a cluster the easy way
 
   -a <addr>: API server IP address, default: $ADDRESS
   -e <addr>: endpoint for all control-plane nodes, default: "$ENDPOINT"
@@ -55,6 +58,11 @@ Usage: $SELF [-a <addr>] [-e <addr>] [-s <sans>] [-m <opt>] [-v <ver>]
   -W:        do not schedule workload on control-plane node, default: $NO_WORKLOAD
   -n:        dry run, print out information only, default: $DRY_RUN
   -h:        print the usage message
+
+  The container images ("*.tar.gz") in "$CACHE" will be loaded automatically.
+  You can save all the downloaded container images by the command:
+
+    $CACHE_IMAGE
 
 Examples:
 
@@ -117,6 +125,7 @@ function main() {
   ensure_nonroot
   check_prerequisites
   ensure_workdir
+  load_cache
   ensure_swapoff
   ensure_iptables
   ensure_firewalloff
@@ -182,16 +191,16 @@ function need_mirror() {
     else
       local target="k8s.gcr.io/pause"
       if $DOCKER pull $target >/dev/null 2>&1; then
-	msg "$DOCKER pull $target is OK"
-	target="https://cloud.google.com"
+        msg "$DOCKER pull $target is OK"
+        target="https://cloud.google.com"
         if curl -s -m 5 $target >/dev/null 2>&1; then
           msg "curl $target is OK"
           MIRROR=no
         else
           msg "curl $target is FAILED"
-	fi
+        fi
       else
-	msg "$DOCKER pull $target is FAILED"
+        msg "$DOCKER pull $target is FAILED"
       fi
     fi
   fi
@@ -350,9 +359,54 @@ function ensure_nonroot() {
 
 function ensure_workdir() {
   msg "ensure workdir"
+
   if [[ ! -d $CACHE ]]; then
     msg "create dir: $CACHE"
     mkdir -p $CACHE
+  fi
+
+  if [[ ! -f $CACHE_IMAGE ]]; then
+    msg "create script: $CACHE_IMAGE"
+cat <<'EOF' > $CACHE_IMAGE
+#!/usr/bin/env bash
+# AUTO-GENERATED
+# load or save images
+
+set -e
+
+DOCKER="sudo docker"
+if [[ "$(id -u)" == "0" ]] || id -nG | grep -qw docker; then
+  DOCKER="docker"
+fi
+
+cd $(dirname $0)
+
+if [[ $1 == "load" ]]; then
+  echo "load images:"
+  images="$(ls *.tar.gz 2>/dev/null || true)"
+  for i in $images; do
+    echo "loading $i"
+    $DOCKER load -i $i
+  done
+else
+  echo "save images:"
+  images="$($DOCKER images --format '{{.Repository}}:{{.Tag}}')"
+  for i in $images; do
+    echo "saving $i"
+    $DOCKER save $i | gzip > ${i##*/}.tar.gz;
+  done
+fi
+EOF
+
+    chmod a+x $CACHE_IMAGE
+  fi
+}
+
+function load_cache() {
+  msg "load cache if exists"
+
+  if [[ -f $CACHE_IMAGE ]]; then
+    $CACHE_IMAGE load
   fi
 }
 
@@ -378,14 +432,14 @@ function init_cluster() {
 
   [[ $OFFLINE == "y" ]] && msg "WARNING: offline mode, cache must be ready"
 
-  local yaml="$CACHE/kube-flannel.yml"
+  local flannel="$CACHE/kube-flannel.yml"
   msg "download flannel manifest"
-  if [[ ! -e $yaml ]]; then
-    curl https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml > $yaml
+  if [[ ! -e $flannel ]]; then
+    curl https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml > $flannel
   fi
 
   # different CNI addon requires different pod-network-cider, here is for flannel
-  local cidr=$(perl -ne 'print $1 if /"Network":\s*"([^"]+)"/' $CACHE/kube-flannel.yml)
+  local cidr=$(perl -ne 'print $1 if /"Network":\s*"([^"]+)"/' $flannel)
 
   local extra=
   if [[ -n $SANS ]]; then
@@ -426,7 +480,7 @@ function init_cluster() {
 
   # install flannel to manage the network
   msg "install flannel"
-  kubectl apply -f kube-flannel.yml
+  kubectl apply -f $flannel
 }
 
 main "$@"
