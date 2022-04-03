@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 21.11.26
+# version: 22.04.03
 
 set -e
 
@@ -17,7 +17,8 @@ fi
 K8S_NOPROXY=".svc,.svc.cluster.local"
 K8S_PKGS="kubelet kubeadm kubectl"
 
-ADDRESS=$HOST_IP      # API server address
+ADDRESS=$HOST_IP      # API server IP address
+ENDPOINT=""           # endpoint for all control-plane nodes
 SANS=$HOST_DNS        # API server certificate SANs
 VERSION=1.20.0        # k8s stable version
 OPTIONS="yes no auto" # valid options
@@ -26,7 +27,7 @@ RESET=n               # reset cluster first
 DRY_RUN=n             # dry run or not
 OFFLINE=n             # no external network
 NO_CLUSTER=n          # do not init cluster
-NO_WORKLOAD=n         # do not schedule workload on master node
+NO_WORKLOAD=n         # do not schedule workload on control-plane node
 
 function msg() {
   echo "> $@"
@@ -38,17 +39,19 @@ function err() {
 
 function usage() {
   cat <<EOF
-Usage: $SELF [-a <addr>] [-s <sans>] [-m <opt>] [-v <ver>] [-r] [-R] [-C] [-W] [-n] [-h]
+Usage: $SELF [-a <addr>] [-e <addr>] [-s <sans>] [-m <opt>] [-v <ver>]
+  [-r] [-R] [-C] [-W] [-n] [-h]
   Deploy k8s and initialize cluster for local development purpose
 
-  -a <addr>: API server address, default: $ADDRESS
+  -a <addr>: API server IP address, default: $ADDRESS
+  -e <addr>: endpoint for all control-plane nodes, default: "$ENDPOINT"
   -s <sans>: API server certificate SANs separated by ",", default: $SANS
   -m <opt>:  mirror option [$OPTIONS], default: $MIRROR
   -v <ver>:  k8s version, default: $VERSION
   -r:        reset k8s cluster first, default: $RESET
   -R:        reset k8s cluster and stop, same as -rC
   -C:        do not initialize cluster, default: $NO_CLUSTER
-  -W:        do not schedule workload on master node, default: $NO_WORKLOAD
+  -W:        do not schedule workload on control-plane node, default: $NO_WORKLOAD
   -n:        dry run, print out information only, default: $DRY_RUN
   -h:        print the usage message
 
@@ -63,22 +66,26 @@ Examples:
   3. Reset the cluster and deploy again with specific version
      $SELF -r -v 1.21.0
 
-  4. Deploy a cluster with one master and one worker node
-     # on master node
+  4. Deploy a cluster with one control-plane and one worker node
+     # on control-plane node
      $SELF -W
      # check the output command for "kubeadm join"
 
      # on worker node
      $SELF -C
      # use "kubeadm join" command to join the cluster
+
+  5. Deploy a control-plane node with DNS name vip.k8s.io
+     $SELF -W -e vip.k8s.io
 EOF
 
 }
 
-while getopts ":a:s:m:v:hCWnRr" opt
+while getopts ":a:e:s:m:v:hCWnRr" opt
 do
   case $opt in
     a ) ADDRESS=$OPTARG;;
+    e ) ENDPOINT=$OPTARG;;
     s ) SANS=$OPTARG;;
     m ) MIRROR=$OPTARG
         if echo $OPTIONS | grep -v -w $MIRROR >/dev/null 2>&1; then
@@ -98,7 +105,7 @@ do
 done
 shift $((OPTIND-1))
 
-for v in DOCKER HOST_IP ADDRESS SANS VERSION MIRROR RESET NO_CLUSTER NO_WORKLOAD DRY_RUN
+for v in DOCKER HOST_IP ADDRESS ENDPOINT SANS VERSION MIRROR RESET NO_CLUSTER NO_WORKLOAD DRY_RUN
 do
   eval echo "$v: \${$v}"
 done
@@ -368,6 +375,9 @@ function init_cluster() {
   if [[ -n $SANS ]]; then
     extra="$extra --apiserver-cert-extra-sans=$SANS"
   fi
+  if [[ -n $ENDPOINT ]]; then
+    extra="$extra --control-plane-endpoint=$ENDPOINT --upload-certs"
+  fi
   if [[ $NEED_MIRROR == "y" ]]; then
     local repo="registry.aliyuncs.com/google_containers"
     extra="$extra --image-repository $repo"
@@ -391,9 +401,9 @@ function init_cluster() {
   sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
   sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-  # untaint master
+  # untaint control-plane
   if [[ $NO_WORKLOAD != "y" ]]; then
-    msg "allow to schedule pods on the master"
+    msg "allow to schedule pods on the control-plane"
     kubectl taint nodes --all node-role.kubernetes.io/master-
   fi
 
