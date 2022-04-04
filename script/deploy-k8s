@@ -130,7 +130,6 @@ function main() {
   warn_as_root
   check_prerequisites
   ensure_workdir
-  load_cache
   ensure_swapoff
   ensure_iptables
   ensure_firewalloff
@@ -407,14 +406,6 @@ EOF
   fi
 }
 
-function load_cache() {
-  msg "load cache if exists"
-
-  if [[ -f $CACHE_IMAGE ]]; then
-    $CACHE_IMAGE load
-  fi
-}
-
 function reset_cluster() {
   msg "reset cluster"
   $SUDO kubeadm reset
@@ -467,6 +458,11 @@ function init_cluster() {
       eval $e="$K8S_NOPROXY,$cidr,${!e}"
     fi
   done
+
+  if [[ -f $CACHE_IMAGE ]]; then
+    msg "try to load cached container images"
+    $CACHE_IMAGE load
+  fi
 
   msg "init k8s control-plane node, ver:$VERSION, api:$ADDRESS, cidr:$cidr, extra:'$extra'"
   $SUDO kubeadm init --kubernetes-version=$VERSION --apiserver-advertise-address=$ADDRESS --pod-network-cidr=$cidr $extra
