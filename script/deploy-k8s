@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.04.04
+# version: 22.04.05
 
 set -e
 
@@ -132,6 +132,7 @@ function main() {
   ensure_workdir
   ensure_swapoff
   ensure_iptables
+  ensure_selinuxoff
   ensure_firewalloff
   need_mirror
   ensure_installed
@@ -218,6 +219,36 @@ function install_k8s() {
   local dist=$(dist_name)
   msg "install k8s on \"$dist\""
 
+  local cachedir="$CACHE/packages/$dist"
+  mkdir -p $cachedir
+
+  if [[ $OFFLINE == "y" ]]; then
+    msg "WARNING: offline mode, cache must be ready"
+    msg "try to install package from the cache"
+    if [[ $dist == "ubuntu" ]]; then
+      msg "install $cachedir/*.deb"
+      $SUDO dpkg -i $cachedir/*.deb
+      msg "no auto update for $K8S_PKGS"
+      $SUDO apt-mark hold $K8S_PKGS
+    elif [[ $dist == "centos" ]]; then
+      msg "install $cachedir/*.rpm"
+      $SUDO yum install -y -C --disablerepo=* $cachedir/*.rpm
+      msg "enabled and start kubelet"
+      $SUDO systemctl enable --now kubelet
+    else
+      err "dist \"$dist\" is not supported!"
+      exit 1
+    fi
+
+    if [[ -z $(which kubeadm) ]]; then
+      msg "kubeadm is not available"
+      exit 1
+    fi
+
+    # offline mode is done
+    return
+  fi
+
   if [[ $dist == "ubuntu" ]]; then
     local codename="xenial"  # the official doc use xenial for all
     local list="/etc/apt/sources.list.d/kubernetes.list"
@@ -235,12 +266,19 @@ function install_k8s() {
 deb $src kubernetes-$codename main
 EOF
 
+    msg "clean apt cache before installation"
+    $SUDO apt clean
+
     local pkgsss="$K8S_PKGS "
     local wanted="${pkgsss// /=$VERSION-00 }"
     msg "apt update and install: $wanted"
-    $SUDO apt update && $SUDO apt install -y $wanted
+    # use apt-get instead of apt to keep the downloaded packages
+    $SUDO apt update && $SUDO apt-get install -y $wanted
     msg "no auto update for $K8S_PKGS"
     $SUDO apt-mark hold $K8S_PKGS
+
+    msg "save the installed packages to $cachedir"
+    cp -r /var/cache/apt/archives/*.deb $cachedir
   elif [[ $dist == "centos" ]]; then
     local name="el7-x86_64"
     local list="/etc/yum.repos.d/kubernetes.repo"
@@ -265,11 +303,17 @@ gpgkey=$key/yum-key.gpg $key/rpm-package-key.gpg
 exclude=kubelet kubeadm kubectl
 EOF
 
-    if [[ -n "$(which getenforce)" && "$(getenforce)" == "Enforcing" ]]; then
-      msg "set SELinux in permissive mode (effectively disabling it)"
-      $SUDO setenforce 0
-      $SUDO sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+    msg "enable yum cache"
+    local conf="/etc/yum.conf"
+    if grep "keepcache" $conf >/dev/null; then
+      $SUDO perl -pi -e 's/(keepcache\s*=\s*).*$/${1}1/' $conf
+    else
+      $SUDO perl -pi -e 's/^(\s*\[main\].*)$/${1}\nkeepcache=1/' $conf
     fi
+    $SUDO yum makecache
+
+    msg "clean yum cache before installation"
+    $SUDO yum clean packages
 
     local pkgsss="$K8S_PKGS "
     local wanted="${pkgsss// /-$VERSION }"
@@ -277,9 +321,25 @@ EOF
     $SUDO yum install -y $wanted --disableexcludes=kubernetes
     msg "enabled and start kubelet"
     $SUDO systemctl enable --now kubelet
+
+    msg "save the installed packages to $cachedir"
+    if [[ -d /var/cache/dnf ]]; then
+      cp /var/cache/dnf/*/packages/*.rpm $cachedir
+    else
+      cp /var/cache/yum/*/*/*/packages/*.rpm $cachedir
+    fi
   else
     err "dist \"$dist\" is not supported!"
     exit 1
+  fi
+}
+
+function ensure_selinuxoff() {
+  msg "ensure SELinux is off"
+  if [[ -n "$(which getenforce)" && "$(getenforce)" == "Enforcing" ]]; then
+    msg "set SELinux in permissive mode (effectively disabling it)"
+    $SUDO setenforce 0
+    $SUDO sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
   fi
 }
 
@@ -298,11 +358,6 @@ function ensure_installed() {
       msg "  $SELF -R && $SUDO apt autoremove $K8S_PKGS"
     fi
   else
-    if [[ $OFFLINE == "y" ]]; then
-      msg "can't install k8s in offline mode, exit"
-      exit 1
-    fi
-
     install_k8s
   fi
 }
