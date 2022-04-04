@@ -262,7 +262,7 @@ function install_k8s() {
     msg "add key from $key"
     curl -s $key | $SUDO apt-key add -
     msg "add $src to $list for $codename"
-    cat <<EOF | $SUDO tee -a $list
+    cat <<EOF | $SUDO tee $list
 deb $src kubernetes-$codename main
 EOF
 
@@ -280,7 +280,7 @@ EOF
     msg "save the installed packages to $cachedir"
     cp -r /var/cache/apt/archives/*.deb $cachedir
   elif [[ $dist == "centos" ]]; then
-    local name="el7-x86_64"
+    local name="el7-$(uname -m)"
     local list="/etc/yum.repos.d/kubernetes.repo"
     local src="https://packages.cloud.google.com/yum/repos"
     local key="https://packages.cloud.google.com/yum/doc"
