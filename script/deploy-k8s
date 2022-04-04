@@ -355,7 +355,12 @@ function ensure_installed() {
       msg "we only support to switch control-plane version"
       msg "do it by yourself if you really want to switch k8s version"
       msg "here is one solution: reset cluster and delete k8s, then deploy it again"
-      msg "  $SELF -R && $SUDO apt autoremove $K8S_PKGS"
+      local dist=$(dist_name)
+      local cmd='apt autoremove'
+      if [[ $dist == "centos" ]]; then
+        cmd='yum remove'
+      fi
+      msg "  $SELF -R && $SUDO $cmd $K8S_PKGS"
     fi
   else
     install_k8s
