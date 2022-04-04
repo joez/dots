@@ -252,13 +252,15 @@ EOF
     fi
 
     msg "add $src to $list for $name"
+    # repo_gpgcheck is disabled for centos7
+    # details in https://github.com/kubernetes/kubernetes/issues/100757
 cat <<EOF | $SUDO tee $list
 [kubernetes]
 name=Kubernetes
 baseurl=$src/kubernetes-$name
 enabled=1
 gpgcheck=1
-repo_gpgcheck=1
+repo_gpgcheck=0
 gpgkey=$key/yum-key.gpg $key/rpm-package-key.gpg
 exclude=kubelet kubeadm kubectl
 EOF
