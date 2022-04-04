@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.04.03
+# version: 22.04.04
 
 set -e
 
 SELF=`basename $0`
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+DOCKER="$SUDO docker"
+if id -nG | grep -qw docker; then
+  DOCKER="docker"
+fi
+
 # IP of the primary interface on the host
 HOST_IP=$(ip route get 1 | head -1 | awk '{print $7}')
 HOST_DNS=$(hostname -f)
 
-DOCKER="sudo docker"
-if [[ "$(id -u)" == "0" ]] || id -nG | grep -qw docker; then
-  DOCKER="docker"
-fi
-
 K8S_NOPROXY=".svc,.svc.cluster.local"
 K8S_PKGS="kubelet kubeadm kubectl"
+CACHE="cache"                         # the cache directory
+CACHE_IMAGE="$CACHE/image"            # script to save or load images
 
 ADDRESS=$HOST_IP      # API server IP address
 ENDPOINT=""           # endpoint for all control-plane nodes
@@ -28,9 +36,6 @@ DRY_RUN=n             # dry run or not
 OFFLINE=n             # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
-
-CACHE="cache"              # the cache directory
-CACHE_IMAGE="$CACHE/image" # script to save or load images
 
 function msg() {
   echo "> $@"
@@ -122,7 +127,7 @@ done
 [[ $DRY_RUN == "y" ]] && exit
 
 function main() {
-  ensure_nonroot
+  warn_as_root
   check_prerequisites
   ensure_workdir
   load_cache
@@ -225,18 +230,18 @@ function install_k8s() {
     fi
 
     msg "add key from $key"
-    curl -s $key | sudo apt-key add -
+    curl -s $key | $SUDO apt-key add -
     msg "add $src to $list for $codename"
-    cat <<EOF | sudo tee -a $list
+    cat <<EOF | $SUDO tee -a $list
 deb $src kubernetes-$codename main
 EOF
 
     local pkgsss="$K8S_PKGS "
     local wanted="${pkgsss// /=$VERSION-00 }"
     msg "apt update and install: $wanted"
-    sudo apt update && sudo apt install -y $wanted
+    $SUDO apt update && $SUDO apt install -y $wanted
     msg "no auto update for $K8S_PKGS"
-    sudo apt-mark hold $K8S_PKGS
+    $SUDO apt-mark hold $K8S_PKGS
   elif [[ $dist == "centos" ]]; then
     local name="el7-x86_64"
     local list="/etc/yum.repos.d/kubernetes.repo"
@@ -248,7 +253,7 @@ EOF
     fi
 
     msg "add $src to $list for $name"
-cat <<EOF | sudo tee $list
+cat <<EOF | $SUDO tee $list
 [kubernetes]
 name=Kubernetes
 baseurl=$src/kubernetes-$name
@@ -261,16 +266,16 @@ EOF
 
     if [[ -n "$(which getenforce)" && "$(getenforce)" == "Enforcing" ]]; then
       msg "set SELinux in permissive mode (effectively disabling it)"
-      sudo setenforce 0
-      sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+      $SUDO setenforce 0
+      $SUDO sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
     fi
 
     local pkgsss="$K8S_PKGS "
     local wanted="${pkgsss// /-$VERSION }"
     msg "install $wanted"
-    sudo yum install -y $wanted --disableexcludes=kubernetes
+    $SUDO yum install -y $wanted --disableexcludes=kubernetes
     msg "enabled and start kubelet"
-    sudo systemctl enable --now kubelet
+    $SUDO systemctl enable --now kubelet
   else
     err "dist \"$dist\" is not supported!"
     exit 1
@@ -289,7 +294,7 @@ function ensure_installed() {
       msg "we only support to switch control-plane version"
       msg "do it by yourself if you really want to switch k8s version"
       msg "here is one solution: reset cluster and delete k8s, then deploy it again"
-      msg "  $SELF -R && sudo apt autoremove $K8S_PKGS"
+      msg "  $SELF -R && $SUDO apt autoremove $K8S_PKGS"
     fi
   else
     if [[ $OFFLINE == "y" ]]; then
@@ -310,12 +315,12 @@ function ensure_swapoff() {
     if [[ -n $swap ]]
     then
       msg "disable swap device $swap"
-      sudo systemctl mask $swap
+      $SUDO systemctl mask $swap
     fi
     msg "disable any swap device in fstab"
-    sudo perl -pi -e 's/^(.+(none|swap)\s+swap.+)/#$1/ unless /^#/' /etc/fstab
+    $SUDO perl -pi -e 's/^(.+(none|swap)\s+swap.+)/#$1/ unless /^#/' /etc/fstab
     msg "swapoff -a"
-    sudo swapoff -a
+    $SUDO swapoff -a
   else
     msg "no swap device"
   fi
@@ -325,8 +330,8 @@ function ensure_firewalloff() {
   msg "ensure firewall is off for simplicity"
   if [[ "$(systemctl is-active firewalld)" == "active" ]]; then
     echo "firewall is active, stop and disable it"
-    sudo systemctl stop firewalld
-    sudo systemctl disable firewalld
+    $SUDO systemctl stop firewalld
+    $SUDO systemctl disable firewalld
   fi
 }
 
@@ -334,26 +339,26 @@ function ensure_iptables() {
   msg "ensure iptables see bridged traffic"
   if ! lsmod | grep -wq br_netfilter; then
     echo "br_netfilter is not loaded, load it and make it auto-loaded"
-    sudo modprobe br_netfilter
-    cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+    $SUDO modprobe br_netfilter
+    cat <<EOF | $SUDO tee /etc/modules-load.d/k8s.conf
 br_netfilter
 EOF
   fi
   local prefix="/proc/sys/net/bridge/bridge-nf-call-ip"
   if [[ "$(cat ${prefix}tables)" != "1" || "$(cat ${prefix}6tables)" != "1" ]]; then
     msg "bridge-nf-call-iptables is disabled, enable it"
-    cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+    cat <<EOF | $SUDO tee /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-ip6tables = 1
 net.bridge.bridge-nf-call-iptables = 1
 EOF
-    sudo sysctl --system
+    $SUDO sysctl --system
   fi
 }
 
-function ensure_nonroot() {
+function warn_as_root() {
   if [[ $(id -u) == "0" ]]; then
-    msg "should not run as root user to avoid confusion later!"
-    exit 1
+    msg "you are running as root user, kubectl will be configured to root only!"
+    sleep 3
   fi
 }
 
@@ -412,14 +417,14 @@ function load_cache() {
 
 function reset_cluster() {
   msg "reset cluster"
-  sudo kubeadm reset
+  $SUDO kubeadm reset
   msg "release cni0 if any"
   if ip link show cni0 >/dev/null 2>&1; then
-    sudo ip link set cni0 down
-    sudo ip link delete cni0
+    $SUDO ip link set cni0 down
+    $SUDO ip link delete cni0
   fi
   msg "clean cni config"
-  sudo rm -f /etc/cni/net.d/*
+  $SUDO rm -f /etc/cni/net.d/*
 }
 
 function init_cluster() {
@@ -464,13 +469,13 @@ function init_cluster() {
   done
 
   msg "init k8s control-plane node, ver:$VERSION, api:$ADDRESS, cidr:$cidr, extra:'$extra'"
-  sudo kubeadm init --kubernetes-version=$VERSION --apiserver-advertise-address=$ADDRESS --pod-network-cidr=$cidr $extra
+  $SUDO kubeadm init --kubernetes-version=$VERSION --apiserver-advertise-address=$ADDRESS --pod-network-cidr=$cidr $extra
 
   # config
   msg "setup config to access cluster"
   mkdir -p $HOME/.kube
-  sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
-  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+  $SUDO cp /etc/kubernetes/admin.conf $HOME/.kube/config
+  $SUDO chown $(id -u):$(id -g) $HOME/.kube/config
 
   # untaint control-plane
   if [[ $NO_WORKLOAD != "y" ]]; then
