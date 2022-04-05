@@ -445,7 +445,7 @@ if [[ "$(id -u)" == "0" ]] || id -nG | grep -qw docker; then
   DOCKER="docker"
 fi
 
-cd $(dirname $0)
+mkdir -p $(dirname $0)/images && cd $_
 
 if [[ $1 == "load" ]]; then
   echo "load images:"
