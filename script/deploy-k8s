@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.04.05
+# version: 22.04.06
 
 set -e
 
@@ -521,7 +521,7 @@ function init_cluster() {
     fi
   done
 
-  if [[ -f $CACHE_IMAGE ]]; then
+  if [[ $OFFLINE == "y" && -f $CACHE_IMAGE ]]; then
     msg "try to load cached container images"
     $CACHE_IMAGE load
   fi
