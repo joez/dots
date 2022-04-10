@@ -66,8 +66,17 @@ Usage: $SELF [-a <addr>] [-e <addr>] [-s <sans>] [-m <opt>] [-N <node>]
   -n:        dry run, print out information only, default: $DRY_RUN
   -h:        print the usage message
 
-  The container images ("*.tar.gz") in "$CACHE" will be loaded automatically.
-  You can save all the downloaded container images by the command:
+Offline mode:
+
+  To support deployment in offline mode, the required packages and containers
+  will be cached in the folder "$CACHE/" when deploying it on a machine with
+  internet connection, then copy the cache to the target machine and deploy it
+
+  These cached files will be loaded in offline mode when necessary:
+  * The software packages in "$CACHE/packages"
+  * The container images in "$CACHE/images"
+
+  You can save all the downloaded container images by this command:
 
     $CACHE_IMAGE
 
