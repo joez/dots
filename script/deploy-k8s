@@ -480,7 +480,7 @@ function reset_cluster() {
     $SUDO ip link delete cni0
   fi
   msg "clean cni config"
-  $SUDO rm -f /etc/cni/net.d/*
+  $SUDO rm -rf /etc/cni/net.d/
 }
 
 function init_cluster() {
