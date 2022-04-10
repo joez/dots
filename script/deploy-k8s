@@ -26,12 +26,14 @@ CACHE="cache"                         # the cache directory
 CACHE_IMAGE="$CACHE/image"            # script to save or load images
 
 ADDRESS=$HOST_IP      # API server IP address
+BACKEND="vxlan"       # flannel backend
+BACKENDS="none vxlan wireguard" # valid flannel backend options
 ENDPOINT=""           # endpoint for all control-plane nodes
 SANS=$HOST_DNS        # API server certificate SANs
 NODE=""               # specify node name
 VERSION=1.20.0        # k8s stable version
-OPTIONS="yes no auto" # valid options
 MIRROR=auto           # mirror option
+MIRRORS="yes no auto" # valid mirror options
 RESET=n               # reset cluster first
 DRY_RUN=n             # dry run or not
 OFFLINE=n             # no external network
@@ -48,16 +50,17 @@ function err() {
 
 function usage() {
   cat <<EOF
-Usage: $SELF [-a <addr>] [-e <addr>] [-s <sans>] [-m <opt>] [-N <node>]
-  [-v <ver>] [-r] [-R] [-C] [-W] [-n] [-h]
+Usage: $SELF [-a <addr>] [-b <type>] [-e <addr>] [-s <sans>] [-m <type>]
+  [-N <name>] [-v <ver>] [-r] [-R] [-C] [-W] [-n] [-h]
 
   Deploy Kubernetes and initialize a cluster the easy way
 
   -a <addr>: API server IP address, default: $ADDRESS
+  -b <type>: Flannel backend [$BACKENDS], default: $BACKEND
   -e <addr>: endpoint for all control-plane nodes, default: "$ENDPOINT"
   -s <sans>: API server certificate SANs separated by ",", default: $SANS
-  -m <opt>:  mirror option [$OPTIONS], default: $MIRROR
-  -N <node>: set node name, instead of the actual hostname, default: "$NODE"
+  -m <type>: mirror option [$MIRRORS], default: $MIRROR
+  -N <name>: set node name, instead of the actual hostname, default: "$NODE"
   -v <ver>:  k8s version, default: $VERSION
   -r:        reset k8s cluster first, default: $RESET
   -R:        reset k8s cluster and stop, same as -rC
@@ -106,14 +109,20 @@ EOF
 
 }
 
-while getopts ":a:e:s:m:N:v:hCWnRr" opt
+while getopts ":a:b:e:s:m:N:v:hCWnRr" opt
 do
   case $opt in
     a ) ADDRESS=$OPTARG;;
+    b ) BACKEND=$OPTARG
+        if echo $BACKENDS | grep -v -w $BACKEND >/dev/null 2>&1; then
+          echo "invalid backend option $BACKEND"
+          usage && exit 1
+        fi
+        ;;
     e ) ENDPOINT=$OPTARG;;
     s ) SANS=$OPTARG;;
     m ) MIRROR=$OPTARG
-        if echo $OPTIONS | grep -v -w $MIRROR >/dev/null 2>&1; then
+        if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
           echo "invalid mirror option $MIRROR"
           usage && exit 1
         fi
@@ -131,7 +140,7 @@ do
 done
 shift $((OPTIND-1))
 
-for v in DOCKER HOST_IP ADDRESS ENDPOINT NODE SANS VERSION MIRROR RESET NO_CLUSTER NO_WORKLOAD DRY_RUN
+for v in DOCKER HOST_IP ADDRESS BACKEND ENDPOINT NODE SANS VERSION MIRROR RESET NO_CLUSTER NO_WORKLOAD DRY_RUN
 do
   eval echo "$v: \${$v}"
 done
@@ -503,6 +512,7 @@ function init_cluster() {
   [[ $OFFLINE == "y" ]] && msg "WARNING: offline mode, cache must be ready"
 
   local flannel="$CACHE/kube-flannel.yml"
+  local flannel_mod="$CACHE/kube-flannel.mod.yml"
   msg "download flannel manifest"
   if [[ ! -e $flannel ]]; then
     curl https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml > $flannel
@@ -557,8 +567,19 @@ function init_cluster() {
   fi
 
   # install flannel to manage the network
-  msg "install flannel"
-  kubectl apply -f $flannel
+  if [[ $BACKEND == 'none' ]]; then
+    msg "no flannel is required, you should deploy CNI plugin by yourself"
+  else
+    msg "deploy flannel: $flannel_mod"
+    local cmds=$(cat <<EOF
+      if (/^\s+"Backend":\s*\{/ .. /^\s+\}\s*$/) {
+        s/^(\s+)("Type":\s*).+$/\$1\$2"$BACKEND",\n\$1"PersistentKeepaliveInterval": 25/
+      }
+EOF
+    )
+    perl -pe "$cmds" $flannel > $flannel_mod
+    kubectl apply -f $flannel_mod
+  fi
 }
 
 main "$@"
