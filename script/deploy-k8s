@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.04.06
+# version: 22.04.10
 
 set -e
 
@@ -28,6 +28,7 @@ CACHE_IMAGE="$CACHE/image"            # script to save or load images
 ADDRESS=$HOST_IP      # API server IP address
 ENDPOINT=""           # endpoint for all control-plane nodes
 SANS=$HOST_DNS        # API server certificate SANs
+NODE=""               # specify node name
 VERSION=1.20.0        # k8s stable version
 OPTIONS="yes no auto" # valid options
 MIRROR=auto           # mirror option
@@ -47,8 +48,8 @@ function err() {
 
 function usage() {
   cat <<EOF
-Usage: $SELF [-a <addr>] [-e <addr>] [-s <sans>] [-m <opt>] [-v <ver>]
-  [-r] [-R] [-C] [-W] [-n] [-h]
+Usage: $SELF [-a <addr>] [-e <addr>] [-s <sans>] [-m <opt>] [-N <node>]
+  [-v <ver>] [-r] [-R] [-C] [-W] [-n] [-h]
 
   Deploy Kubernetes and initialize a cluster the easy way
 
@@ -56,6 +57,7 @@ Usage: $SELF [-a <addr>] [-e <addr>] [-s <sans>] [-m <opt>] [-v <ver>]
   -e <addr>: endpoint for all control-plane nodes, default: "$ENDPOINT"
   -s <sans>: API server certificate SANs separated by ",", default: $SANS
   -m <opt>:  mirror option [$OPTIONS], default: $MIRROR
+  -N <node>: set node name, instead of the actual hostname, default: "$NODE"
   -v <ver>:  k8s version, default: $VERSION
   -r:        reset k8s cluster first, default: $RESET
   -R:        reset k8s cluster and stop, same as -rC
@@ -95,7 +97,7 @@ EOF
 
 }
 
-while getopts ":a:e:s:m:v:hCWnRr" opt
+while getopts ":a:e:s:m:N:v:hCWnRr" opt
 do
   case $opt in
     a ) ADDRESS=$OPTARG;;
@@ -107,6 +109,7 @@ do
           usage && exit 1
         fi
         ;;
+    N ) NODE=$OPTARG;;
     v ) VERSION=${OPTARG#v};;
     r ) RESET=y;;
     R ) RESET=y && NO_CLUSTER=y;;
@@ -119,7 +122,7 @@ do
 done
 shift $((OPTIND-1))
 
-for v in DOCKER HOST_IP ADDRESS ENDPOINT SANS VERSION MIRROR RESET NO_CLUSTER NO_WORKLOAD DRY_RUN
+for v in DOCKER HOST_IP ADDRESS ENDPOINT NODE SANS VERSION MIRROR RESET NO_CLUSTER NO_WORKLOAD DRY_RUN
 do
   eval echo "$v: \${$v}"
 done
@@ -505,6 +508,9 @@ function init_cluster() {
   fi
   if [[ -n $ENDPOINT ]]; then
     extra="$extra --control-plane-endpoint=$ENDPOINT --upload-certs"
+  fi
+  if [[ -n $NODE ]]; then
+    extra="$extra --node-name=$NODE"
   fi
   if [[ $NEED_MIRROR == "y" ]]; then
     local repo="registry.aliyuncs.com/google_containers"
