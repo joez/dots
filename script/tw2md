@@ -64,7 +64,7 @@ if ($test) {
   unshift(@ARGV, '-') unless @ARGV;
   foreach my $f (@ARGV) {
     local *STDIN;
-    open STDIN, '<', $f or die;
+    open STDIN, '<', $f or die "$!";
 
     convert($reverse)
   }
@@ -74,39 +74,43 @@ sub convert {
   my $reverse = shift || 0;
   my %ctx = shift || {};
 
+  my $re_indent = qr/^(?:[ ]{4}|\t)/;
+
   $ctx{'cb_md2tw_ext_link'} = sub {
     my ($name, $link) = @_;
     $link =~ m{^(?:[^:/?#]+):} ? "[[$name|$link]]" : "[ext[$name|$link]]"
   };
 
   while (<STDIN>) {
-    # a non-blank line starts a new paragraph
     if (/^\s*$/) {
-      $ctx{'last_line_blank'}++;
-      print and next;
+      $ctx{'curr_line_blank'}++;
     } else {
-      if ($ctx{'last_line_blank'}) {
-        $ctx{'last_line_blank'} = 0;
-        $ctx{'new_paragraph'}++;
-      } else {
-        $ctx{'new_paragraph'} = 0;
-      }
+      $ctx{'curr_line_blank'} = 0;
+    }
+
+    # both support code block with ```, leave as is
+    if (m/^```\w*$/ ... m/^```\s*$/) {
+      print and next;
     }
 
     if ($reverse) {
       # md2tw
-      # code block, indent 4 spaces or tab
-      if ($ctx{'new_paragraph'} && /^(?:[ ]{4}|\t)/) {
-        print "```\n" unless $ctx{'in_code_block_indent'}++;
-        print substr($_, 4) and next;
+      # code block with indent
+      if ($ctx{'in_code_block_indent'}) {
+        if (/$re_indent/) {
+          print substr($_, 4) and next;
+        } else {
+          # stop the code block
+          print "```\n";
+          $ctx{'in_code_block_indent'} = 0;
+        }
       } else {
-        # TODO: no chance to print when eof
-        print "```\n" if $ctx{'in_code_block_indent'};
-        $ctx{'in_code_block_indent'} = undef;
-      }
-      # code block with ```, leave as is
-      if (m/^```\w*$/ ... m/^```\s*$/) {
-        print and next;
+        # start new code block
+        if ($ctx{'last_line_blank'} && /$re_indent/) {
+          print "```\n";
+          $ctx{'in_code_block_indent'}++;
+          print substr($_, 4) and next;
+        }
       }
 
       # headers
@@ -146,10 +150,6 @@ sub convert {
 
     } else {
       # tw2md
-      # code block with ```, leave as is
-      if (m/^```\w*$/ ... m/^```\s*$/) {
-        print and next;
-      }
 
       # unordered list, good enough
       s/^(?:\s*)(\*+)\s*/'  ' x (length($1)-1) . '* '/eg;
@@ -183,12 +183,19 @@ sub convert {
       # subscripted
       s|,,([^,]+?),,|<sub>$1</sub>|g;
       # strikethrough, the same
-      s|~~([^~]+?)~~|~~$1~~|g;
       # backticks code, the same
-      s|`([^`]+?)`|`$1`|g;
     }
 
     print;
+  } continue {
+    if ($ctx{'curr_line_blank'}) {
+      $ctx{'last_line_blank'}++;
+    } else {
+      $ctx{'last_line_blank'} = 0;
+    }
+    if (eof) {
+      print "\n```\n" if $ctx{'in_code_block_indent'};
+    }
   }
 }
 
@@ -259,9 +266,18 @@ __underscore__ for underscored text
 
 ```
 code block
-  # code **should not** be changed
+
+    # code **should not** be changed
 ```
 
+```perl
+    # another code block
+```
+    not a code block with indent
+
+```
+this is a code block with indent
+```
 @@
 `backticks` for inline code
 **bold** for bold text
@@ -293,5 +309,13 @@ _italic_ for italic text
 
 ```
 code block
-  # code **should not** be changed
+
+    # code **should not** be changed
 ```
+
+```perl
+    # another code block
+```
+    not a code block with indent
+
+    this is a code block with indent
