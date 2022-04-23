@@ -21,6 +21,23 @@ Usage: $self [-h] [-r] [-t] [-v] [<args>...]
   -v:   show version
   -h:   help message
 
+Examples:
+
+  1. $self -t
+    Self-test, from TW5 to Markdown
+
+  2. $self -t -r
+    Self-test reversely, Markdown to TW5
+
+  3. echo '!! h2' | $self
+    Convert '!! h2' from TW5 to Markdown
+
+  4. $self tiddly.wiki > tiddly.md
+    Convert tiddly.wiki in TW5 format to tiddly.md
+
+  5. $self -r tiddly.md wiki.md
+    Convert these two files in Markdown format to TW5, output to STDOUT
+
 EOF
 
   exit;
@@ -57,11 +74,24 @@ sub convert {
   my $reverse = shift || 0;
   my %ctx = shift || {};
 
-  for (<STDIN>) {
+  while (<STDIN>) {
+    # a non-blank line starts a new paragraph
+    if (/^\s*$/) {
+      $ctx{'last_line_blank'}++;
+      print and next;
+    } else {
+      if ($ctx{'last_line_blank'}) {
+        $ctx{'last_line_blank'} = 0;
+        $ctx{'new_paragraph'}++;
+      } else {
+        $ctx{'new_paragraph'} = 0;
+      }
+    }
+
     if ($reverse) {
       # md2tw
       # code block, indent 4 spaces or tab
-      if (/^(?:[ ]{4}|\t)/) {
+      if ($ctx{'new_paragraph'} && /^(?:[ ]{4}|\t)/) {
         print "```\n" unless $ctx{'in_code_block_indent'}++;
         print substr($_, 4) and next;
       } else {
@@ -116,14 +146,15 @@ sub convert {
         print and next;
       }
 
-      # headers
-      s/^(\s*)(!+)/$1 . '#' x length($2)/eg;
       # unordered list, good enough
       s/^(?:\s*)(\*+)\s*/'  ' x (length($1)-1) . '* '/eg;
       # ordered list, good enough
       s/^(?:\s*)(#+)\s*/'  ' x (length($1)-1) . '1. '/eg;
       # blockquotes, the same, clean up
       s/^(?:\s*)(>+)/$1/g;
+      # headers
+      # must after ordered list is handled, otherwise will double convert
+      s/^(\s*)(!+)/$1 . '#' x length($2)/eg;
 
       # wiki link, partially
       s|\[\[([^\|\]]+?)\]\]|[$1][]|g;
@@ -193,7 +224,7 @@ sub self_test {
 }
 
 __DATA__
-`backticks` for code
+`backticks` for inline code
 ''bold'' for bold text
 //italic// for italic text
 __underscore__ for underscored text
@@ -201,18 +232,22 @@ __underscore__ for underscored text
 ,,subscript,, for subscripted text
 ~~strikethrough~~ for strikethrough text
 
-* unordered list
-** unordered list
-# ordered list
-## ordered list
-
-> blockquotes
->> blockquotes level two
+! heading level 1
+!! heading level 2
+!!! heading level 3
+* unordered list level 1
+** unordered list level 2
+*** unordered list level 3
+# ordered list level 1
+## ordered list level 2
+### ordered list level 3
+> blockquotes level 1
+>> blockquotes level 2
 
 [[TiddlyWiki]]
 [[TiddlyWiki|https://tiddlywiki.com]]
-[ext[tiddlywiki.com]]
-[ext[TiddlyWiki|tiddlywiki.com]]
+[ext[joez.html]]
+[ext[JoezWiki|joez.html]]
 [img[https://tiddlywiki.com/favicon.ico]]
 [img[An explanatory tooltip|https://tiddlywiki.com/favicon.ico]]
 [img width=32 [https://tiddlywiki.com/favicon.ico]]
@@ -223,7 +258,7 @@ code block
 ```
 
 @@
-`backticks` for code
+`backticks` for inline code
 **bold** for bold text
 _italic_ for italic text
 <u>underscore</u> for underscored text
@@ -231,18 +266,22 @@ _italic_ for italic text
 <sub>subscript</sub> for subscripted text
 ~~strikethrough~~ for strikethrough text
 
-* unordered list
-  * unordered list
-1. ordered list
-  1. ordered list
-
-> blockquotes
->> blockquotes level two
+# heading level 1
+## heading level 2
+### heading level 3
+* unordered list level 1
+  * unordered list level 2
+    * unordered list level 3
+1. ordered list level 1
+  1. ordered list level 2
+    1. ordered list level 3
+> blockquotes level 1
+>> blockquotes level 2
 
 [TiddlyWiki][]
 [TiddlyWiki](https://tiddlywiki.com)
-[tiddlywiki.com](tiddlywiki.com)
-[TiddlyWiki](tiddlywiki.com)
+[joez.html](joez.html)
+[JoezWiki](joez.html)
 ![](https://tiddlywiki.com/favicon.ico)
 ![An explanatory tooltip](https://tiddlywiki.com/favicon.ico)
 ![](https://tiddlywiki.com/favicon.ico)
