@@ -1,0 +1,253 @@
+#!/usr/bin/env perl
+# author: joe.zheng
+
+use strict;
+
+use Getopt::Long;
+use File::Basename;
+
+my $self = basename($0);
+my $version = 'v0.5';
+
+sub M { local $\ = "\n"; print STDERR "$self: ", @_ }
+
+sub usage {
+  print <<"EOF";
+Usage: $self [-h] [-r] [-t] [-v] [<args>...]
+  Convert TiddlyWiki5 to Markdown or vice versa
+
+  -r:   reversely
+  -t:   self test
+  -v:   show version
+  -h:   help message
+
+EOF
+
+  exit;
+}
+
+# main
+
+my ($help, $reverse, $test, $show_version);
+GetOptions(
+  "help|h"    => \$help,
+  "reverse|r" => \$reverse,
+  "test|t"    => \$test,
+  "version|v" => \$show_version,
+) or usage();
+
+usage() if $help;
+print("$version\n") and exit if $show_version;
+
+M $reverse ? "Markdown -> TiddlyWiki" : "TiddlyWiki -> Markdown";
+
+if ($test) {
+  self_test($reverse)
+} else {
+  unshift(@ARGV, '-') unless @ARGV;
+  foreach my $f (@ARGV) {
+    local *STDIN;
+    open STDIN, '<', $f or die;
+
+    convert($reverse)
+  }
+}
+
+sub convert {
+  my $reverse = shift || 0;
+  my %ctx = shift || {};
+
+  for (<STDIN>) {
+    if ($reverse) {
+      # md2tw
+      # code block, indent 4 spaces or tab
+      if (/^(?:[ ]{4}|\t)/) {
+        print "```\n" unless $ctx{'in_code_block_indent'}++;
+        print substr($_, 4) and next;
+      } else {
+        # TODO: no chance to print when eof
+        print "```\n" if $ctx{'in_code_block_indent'};
+        $ctx{'in_code_block_indent'} = undef;
+      }
+      # code block with ```, leave as is
+      if (m/^```\w*$/ ... m/^```\s*$/) {
+        print and next;
+      }
+
+      # headers
+      s|^(\s*)(#+)|$1 . '!' x length($2)|eg;
+      # unordered list, good enough
+      s|^(\s*)[*+-]\s+|'*' x (length($1)/2) . '* '|eg;
+      # ordered list, good enough
+      s|^(\s*)\d[.)]\s+|'#' x (length($1)/2) . '# '|eg;
+      # blockquotes, the same, clean up
+      s/^(?:\s*)(>+)/$1/g;
+
+      # wiki link, partially
+      s|\[([^\]]+?)\](?:\[\])?(?!\()|[[$1]]|g;
+      # reference link, drop reference
+      s|\[([^\]]+?)\]\[([^\]]+)\](?!\()|[[$1]]|g;
+      # url link
+      s/(?<!\!)\[([^\]]+?)\]\(([^\)]+?)\)/[[$1|$2]]/g;
+      # md no ext link
+      # image link
+      s/!\[([^\]]+?)\]\(([^\)]+?)\)/[img[$1|$2]]/g;
+      s/!\[\]\(([^\)]+?)\)/[img[$1]]/g;
+      # image link with reference, drop reference
+      s|!\[([^\]]+?)\]\[([^\]]+)\](?!\()|[img[$1]]|g;
+
+      # md no underline
+      s|<u>([^<]+?)</u>|__${1}__|g;
+      # bold
+      s/\*\*([^*]+?)\*\*/''$1''/g;
+      # italic
+      s|([_*])([^_*]+?)\1(?!\1)|//$2//|g;
+      # md no superscript
+      s|<sup>([^<]+?)</sup>|^^${1}^^|g;
+      # md no subscripted
+      s|<sub>([^<]+?)</sub>|,,${1},,|g;
+      # strikethrough, the same
+      # backticks code, the same
+
+    } else {
+      # tw2md
+      # code block with ```, leave as is
+      if (m/^```\w*$/ ... m/^```\s*$/) {
+        print and next;
+      }
+
+      # headers
+      s/^(\s*)(!+)/$1 . '#' x length($2)/eg;
+      # unordered list, good enough
+      s/^(?:\s*)(\*+)\s*/'  ' x (length($1)-1) . '* '/eg;
+      # ordered list, good enough
+      s/^(?:\s*)(#+)\s*/'  ' x (length($1)-1) . '1. '/eg;
+      # blockquotes, the same, clean up
+      s/^(?:\s*)(>+)/$1/g;
+
+      # wiki link, partially
+      s|\[\[([^\|\]]+?)\]\]|[$1][]|g;
+      # url link
+      s/\[\[([^\|\]]+?)\|([^\]]+?)\]\]/[$1]($2)/g;
+      # ext link
+      s/\[ext\[([^\|\]]+?)\]\]/[$1]($1)/g;
+      s/\[ext\[([^\|\]]+?)\|([^\]]+?)\]\]/[$1]($2)/g;
+      # image link, drop info can't supported by md
+      s/\[img(?:[^\[]*?)\[([^\|\]]+?)\]\]/![]($1)/g;
+      s/\[img(?:[^\[]*?)\[([^\|\]]+?)\|([^\]]+?)\]\]/![$1]($2)/g;
+
+      # underline
+      s|__([^_]+?)__|<u>$1</u>|g;
+      # bold
+      s|''([^']+?)''|**$1**|g;
+      # italic
+      s|//([^/]+?)//|_$1_|g;
+      # superscript
+      s|\^\^([^\^]+?)\^\^|<sup>$1</sup>|g;
+      # subscripted
+      s|,,([^,]+?),,|<sub>$1</sub>|g;
+      # strikethrough, the same
+      s|~~([^~]+?)~~|~~$1~~|g;
+      # backticks code, the same
+      s|`([^`]+?)`|`$1`|g;
+    }
+
+    print;
+  }
+}
+
+sub self_test {
+  my $reverse = shift;
+
+  M "self_test: conversion is asymmetric, failures may be false positive";
+
+  my $data_start = tell DATA;
+  my $data = do { local $/ = undef; <DATA> };
+  seek DATA, $data_start, 0;
+
+  my ($source, $target) = split(/^@@\s*\r?\n/m, $data);
+  ($source, $target) = ($target, $source) if $reverse;
+
+  my $result;
+  do {
+    local (*STDIN, *STDOUT);
+    open STDIN, '<', \$source or die;
+    open STDOUT, '>', \$result or die;
+
+    convert($reverse);
+  };
+
+  my @s = split /\n/, $source;
+  my @r = split /\n/, $result;
+  my @t = split /\n/, $target;
+
+  for my $i (0 .. $#t) {
+    if ($r[$i] ne $t[$i]) {
+      print(qq/KO: $s[$i]\n -> $r[$i]\n != $t[$i]\n/);
+    } else {
+      print(qq/OK: $s[$i]\n -> $r[$i]\n/);
+    }
+  }
+
+  exit;
+}
+
+__DATA__
+`backticks` for code
+''bold'' for bold text
+//italic// for italic text
+__underscore__ for underscored text
+^^superscript^^ for superscript text
+,,subscript,, for subscripted text
+~~strikethrough~~ for strikethrough text
+
+* unordered list
+** unordered list
+# ordered list
+## ordered list
+
+> blockquotes
+>> blockquotes level two
+
+[[TiddlyWiki]]
+[[TiddlyWiki|https://tiddlywiki.com]]
+[ext[tiddlywiki.com]]
+[ext[TiddlyWiki|tiddlywiki.com]]
+[img[https://tiddlywiki.com/favicon.ico]]
+[img[An explanatory tooltip|https://tiddlywiki.com/favicon.ico]]
+[img width=32 [https://tiddlywiki.com/favicon.ico]]
+
+```
+code block
+  # code **should not** be changed
+```
+
+@@
+`backticks` for code
+**bold** for bold text
+_italic_ for italic text
+<u>underscore</u> for underscored text
+<sup>superscript</sup> for superscript text
+<sub>subscript</sub> for subscripted text
+~~strikethrough~~ for strikethrough text
+
+* unordered list
+  * unordered list
+1. ordered list
+  1. ordered list
+
+> blockquotes
+>> blockquotes level two
+
+[TiddlyWiki][]
+[TiddlyWiki](https://tiddlywiki.com)
+[tiddlywiki.com](tiddlywiki.com)
+[TiddlyWiki](tiddlywiki.com)
+![](https://tiddlywiki.com/favicon.ico)
+![An explanatory tooltip](https://tiddlywiki.com/favicon.ico)
+![](https://tiddlywiki.com/favicon.ico)
+
+```
+code block
+  # code **should not** be changed
+```
