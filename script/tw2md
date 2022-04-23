@@ -74,6 +74,11 @@ sub convert {
   my $reverse = shift || 0;
   my %ctx = shift || {};
 
+  $ctx{'cb_md2tw_ext_link'} = sub {
+    my ($name, $link) = @_;
+    $link =~ m{^(?:[^:/?#]+):} ? "[[$name|$link]]" : "[ext[$name|$link]]"
+  };
+
   while (<STDIN>) {
     # a non-blank line starts a new paragraph
     if (/^\s*$/) {
@@ -118,8 +123,8 @@ sub convert {
       # reference link, drop reference
       s|\[([^\]]+?)\]\[([^\]]+)\](?!\()|[[$1]]|g;
       # url link
-      s/(?<!\!)\[([^\]]+?)\]\(([^\)]+?)\)/[[$1|$2]]/g;
-      # md no ext link
+      # md no ext link, let us convert based on url schema
+      s/(?<!\!)\[([^\]]+?)\]\(([^\)]+?)\)/$ctx{'cb_md2tw_ext_link'}($1,$2)/eg;
       # image link
       s/!\[([^\]]+?)\]\(([^\)]+?)\)/[img[$1|$2]]/g;
       s/!\[\]\(([^\)]+?)\)/[img[$1]]/g;
