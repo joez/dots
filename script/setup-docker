@@ -6,6 +6,11 @@ set -e
 
 SELF="$(basename $0)"
 
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
 PROXY_HOST=""
 PROXY_PORT=""
 PROXY_SKIP="localhost,istio-system.svc,127.0.0.0/8,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
@@ -144,8 +149,8 @@ EOF
 
 echo "configure docker daemon"
 echo "configure $SERVICE_CONFIG"
-sudo mkdir -p $(dirname $SERVICE_CONFIG)
-cat <<EOF | sudo tee $SERVICE_CONFIG
+$SUDO mkdir -p $(dirname $SERVICE_CONFIG)
+cat <<EOF | $SUDO tee $SERVICE_CONFIG
 [Service]
 Environment="HTTP_PROXY=$http_proxy"
 Environment="HTTPS_PROXY=$https_proxy"
@@ -153,12 +158,12 @@ Environment="NO_PROXY=$no_proxy"
 EOF
 
 echo "configure $DOCKERD_CONFIG"
-sudo mkdir -p $(dirname $DOCKERD_CONFIG)
+$SUDO mkdir -p $(dirname $DOCKERD_CONFIG)
 mirrors=""
 if [[ -n $REPO_MIRROR ]]; then
   mirrors="\"registry-mirrors\": [\"$REPO_MIRROR\"],"
 fi
-cat <<EOF | sudo tee $DOCKERD_CONFIG
+cat <<EOF | $SUDO tee $DOCKERD_CONFIG
 {
   "log-opts": {
     "max-size": "500m"
@@ -169,15 +174,15 @@ cat <<EOF | sudo tee $DOCKERD_CONFIG
 EOF
 
 echo "enable docker service"
-sudo systemctl enable docker
+$SUDO systemctl enable docker
 
 echo "restart docker service"
-sudo systemctl daemon-reload
-sudo systemctl restart docker
+$SUDO systemctl daemon-reload
+$SUDO systemctl restart docker
 
 if groups | grep -qwv docker; then
   echo "add docker group to $USER"
-  sudo usermod -aG docker $USER
+  $SUDO usermod -aG docker $USER
   echo "logout and login again or reboot to take effect"
 fi
 echo "done"
