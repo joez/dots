@@ -17,18 +17,21 @@ PROXY_SKIP="localhost,istio-system.svc,127.0.0.0/8,172.16.0.0/12,192.168.0.0/16,
 PORT_HTTP="912"
 PORT_HTTPS="912"
 REPO_MIRROR="https://docker.mirrors.ustc.edu.cn"
+MIRROR=auto           # mirror option
+MIRRORS="yes no auto" # valid mirror options
 
 DRY_RUN="n"
 
 HELP=$(cat <<EOF
-Usage: $SELF [-M <mirror>] [-N <noproxy>] [-H <port>] [-S <port>] [-n] [-h]
-  [<host>] [<port>]
+Usage: $SELF [-M <mirror>] [-N <noproxy>] [-H <port>] [-S <port>] [-m <type>]
+  [-n] [-h] [<host>] [<port>]
   Install Docker and configure it, e.g. proxy, mirror
 
   -M <mirror>:  registry mirror, default: $REPO_MIRROR
   -N <noproxy>: no_proxy settings, default: $PROXY_SKIP
   -H <port>:    proxy port for http, default: $PORT_HTTP
   -S <port>:    proxy port for https, default: $PORT_HTTPS
+  -m <type>:    mirror option [$MIRRORS], default: $MIRROR
   -n:           dry run, print out information only, default: $DRY_RUN
   -h:           print the usage message
 
@@ -51,13 +54,19 @@ Examples:
 EOF
 )
 
-while getopts ":N:M:H:S:nh" opt
+while getopts ":N:M:H:S:m:nh" opt
 do
   case $opt in
     M ) REPO_MIRROR=$OPTARG;;
     N ) PROXY_SKIP=$OPTARG;;
     H ) PORT_HTTP=$OPTARG;;
     S ) PORT_HTTPS=$OPTARG;;
+    m ) MIRROR=$OPTARG
+        if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
+          echo "invalid mirror option $MIRROR"
+          usage && exit 1
+        fi
+        ;;
     n ) DRY_RUN='y';;
     h ) echo "$HELP" && exit;;
     * ) echo "no such option: $opt" && exit 1;;
@@ -88,7 +97,7 @@ else
 fi
 
 for v in DRY_RUN PROXY_HOST PROXY_PORT PROXY_SKIP PORT_HTTP PORT_HTTPS \
-  REPO_MIRROR SERVICE_CONFIG DOCKERD_CONFIG DOCKERC_CONFIG; do
+  MIRROR REPO_MIRROR SERVICE_CONFIG DOCKERD_CONFIG DOCKERC_CONFIG; do
   eval echo "$v: \${$v}"
 done
 
@@ -107,7 +116,24 @@ fi
 # ensure Docker is installed
 if [[ -z $(which docker) ]]; then
   echo "docker is not available, install it"
-  curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
+  if [[ $MIRROR == "auto" ]]; then
+    MIRROR=yes # default as needed
+    echo "check whether we can access google cloud"
+    target="https://cloud.google.com"
+    if curl -s -m 5 $target >/dev/null 2>&1; then
+      echo "curl $target is OK"
+      MIRROR=no
+    else
+      echo "curl $target is FAILED"
+    fi
+  fi
+
+  mirror_opt=""
+  if [[ $MIRROR == "yes" ]]; then
+    mirror_opt="--mirror Aliyun"
+  fi
+  echo "need mirror: $MIRROR"
+  curl -fsSL https://get.docker.com | bash -s docker $mirror_opt
   echo "docker installation is done"
 fi
 
