@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.8.26
+# version: 22.12.13
 
 set -e
 
@@ -16,7 +16,7 @@ PROXY_PORT=""
 PROXY_SKIP="localhost,istio-system.svc,127.0.0.0/8,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
 PORT_HTTP="912"
 PORT_HTTPS="912"
-REPO_MIRROR="https://docker.mirrors.ustc.edu.cn"
+REPO_MIRROR="https://hub-mirror.c.163.com"
 MIRROR=auto           # mirror option
 MIRRORS="yes no auto" # valid mirror options
 
