@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.04.10
+# version: 22.12.13
 
 set -e
 
@@ -31,7 +31,7 @@ BACKENDS="none vxlan wireguard" # valid flannel backend options
 ENDPOINT=""           # endpoint for all control-plane nodes
 SANS=$HOST_DNS        # API server certificate SANs
 NODE=""               # specify node name
-VERSION=1.20.0        # k8s stable version
+VERSION=1.21.0        # k8s stable version
 MIRROR=auto           # mirror option
 MIRRORS="yes no auto" # valid mirror options
 RESET=n               # reset cluster first
@@ -39,6 +39,9 @@ DRY_RUN=n             # dry run or not
 OFFLINE=n             # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
+
+CRI_DOCKERD_VER=0.2.6 # cri-dockerd version
+CRI_DOCKERD_SOC="/var/run/cri-dockerd.sock" # cri-dockerd socket path
 
 function msg() {
   echo "> $@"
@@ -149,6 +152,7 @@ done
 
 function main() {
   warn_as_root
+  validate_sudo
   check_prerequisites
   ensure_workdir
   ensure_swapoff
@@ -194,7 +198,7 @@ function check_prerequisites() {
     exit 1
   fi
   msg "check network"
-  if ! curl -s -m 2 ifconfig.co >/dev/null; then
+  if ! curl -s -m 3 ifconfig.co >/dev/null; then
     err "can't access external network, continue for offline scenario"
     OFFLINE="y"
   else
@@ -203,6 +207,57 @@ function check_prerequisites() {
       err "docker pull can't work, check docker configuration first"
       exit 1
     fi
+  fi
+}
+
+NEED_CRI_DOCKERD=n
+function need_cri_dockerd() {
+  msg "is cri-dockerd needed"
+
+  local target="1.24.0" # the version with dockershim removed
+  local smaller="$(printf "%s\n" $target $VERSION | sort -V | head -n1)"
+  if [[ $smaller == $target ]]; then
+    msg "the requested version $VERSION is greater than $target"
+    NEED_CRI_DOCKERD=y
+  fi
+  msg "need cri-dockerd: $NEED_CRI_DOCKERD"
+}
+
+function install_cri_dockerd_if_needed() {
+  msg "install cri-dockerd if needed"
+
+  need_cri_dockerd
+
+  if [[ $NEED_CRI_DOCKERD == "y" ]]; then
+    if systemctl is-active cri-docker.socket; then
+      v="$(cri-dockerd --version 2>&1 | awk '{print $2}')"
+      msg "cri-dockerd already installed, version: $v"
+      return
+    fi
+
+    local ver=$CRI_DOCKERD_VER
+    local url="https://github.com/Mirantis/cri-dockerd"
+    local dir="$CACHE/packages/common/cri-dockerd"
+
+    mkdir -p $dir
+
+    if [[ $OFFLINE == "y" ]]; then
+      msg "WARNING: offline mode, cache must be ready"
+      msg "try to install from the cache"
+    else
+      msg "download into $dir"
+      curl -sL ${url}/releases/download/v${ver}/cri-dockerd-${ver}.amd64.tgz | tar xz -C $dir --strip-components=1
+      for f in cri-docker.{service,socket}; do
+        curl -sL $url/raw/v${ver}/packaging/systemd/$f > $dir/$f
+      done
+    fi
+
+    msg "now install it"
+    $SUDO cp $dir/cri-dockerd /usr/bin/
+    $SUDO cp $dir/cri-docker.{service,socket} /etc/systemd/system/
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable cri-docker.service
+    $SUDO systemctl enable --now cri-docker.socket
   fi
 }
 
@@ -386,6 +441,8 @@ function ensure_installed() {
   else
     install_k8s
   fi
+
+  install_cri_dockerd_if_needed
 }
 
 function ensure_swapoff() {
@@ -444,6 +501,13 @@ function warn_as_root() {
   fi
 }
 
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
 function ensure_workdir() {
   msg "ensure workdir"
 
@@ -491,7 +555,13 @@ EOF
 
 function reset_cluster() {
   msg "reset cluster"
-  $SUDO kubeadm reset
+  local extra=
+  if [[ $NEED_CRI_DOCKERD == "y" ]]; then
+    extra="$extra --cri-socket unix://$CRI_DOCKERD_SOC"
+    msg "set cri-socket as unix://$CRI_DOCKERD_SOC"
+  fi
+  $SUDO kubeadm reset $extra
+
   msg "release cni0 if any"
   if ip link show cni0 >/dev/null 2>&1; then
     $SUDO ip link set cni0 down
@@ -536,6 +606,14 @@ function init_cluster() {
     extra="$extra --image-repository $repo"
     msg "mirror is required, use image repository: $repo"
   fi
+  if [[ $NEED_CRI_DOCKERD == "y" ]]; then
+    extra="$extra --cri-socket unix://$CRI_DOCKERD_SOC"
+    msg "set cri-socket as unix://$CRI_DOCKERD_SOC"
+  fi
+
+  # use the same cgroup driver as the container runtime (Docker)
+  local cgroupdriver="$($DOCKER info -f {{.CgroupDriver}})"
+  # TODO: only supported by KubeletConfiguration
 
   # patch proxy env vars
   for e in no_proxy NO_PROXY
