@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.12.13
+# version: 22.12.14
 
 set -e
 
@@ -195,6 +195,7 @@ cat <<EOF | $SUDO tee $DOCKERD_CONFIG
     "max-size": "500m"
   },
   $mirrors
+  "exec-opts": ["native.cgroupdriver=systemd"],
   "insecure-registries": ["10.0.0.0/8", "127.0.0.0/8"]
 }
 EOF
