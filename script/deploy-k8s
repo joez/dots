@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.12.13
+# version: 22.12.14
 
 set -e
 
@@ -24,14 +24,17 @@ K8S_NOPROXY=".svc,.svc.cluster.local"
 K8S_PKGS="kubelet kubeadm kubectl"
 CACHE="cache"                         # the cache directory
 CACHE_IMAGE="$CACHE/image"            # script to save or load images
+INIT_CONFIG="kubeadm-init.yaml"       # config file for "kubeadm init"
+JOIN_MANUAL="kubeadm-join.txt"        # "kubeadm join" instructions
 
 ADDRESS=$HOST_IP      # API server IP address
+PORT=6443             # API server IP port
 BACKEND="vxlan"       # flannel backend
 BACKENDS="none vxlan wireguard" # valid flannel backend options
 ENDPOINT=""           # endpoint for all control-plane nodes
 SANS=$HOST_DNS        # API server certificate SANs
 NODE=""               # specify node name
-VERSION=1.21.0        # k8s stable version
+VERSION=1.23.0        # k8s stable version
 MIRROR=auto           # mirror option
 MIRRORS="yes no auto" # valid mirror options
 RESET=n               # reset cluster first
@@ -40,8 +43,8 @@ OFFLINE=n             # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
 
-CRI_DOCKERD_VER=0.2.6 # cri-dockerd version
-CRI_DOCKERD_SOC="/var/run/cri-dockerd.sock" # cri-dockerd socket path
+CRI_DOCKERD_VER=0.2.6                              # cri-dockerd version
+CRI_DOCKERD_SOC="unix:///var/run/cri-dockerd.sock" # cri-dockerd socket path
 
 function msg() {
   echo "> $@"
@@ -193,6 +196,10 @@ function check_prerequisites() {
     err "curl is not available"
     exit 1
   fi
+  if [[ -z $(which openssl) ]]; then
+    err "openssl is not available"
+    exit 1
+  fi
   if [[ -z $(which docker) ]]; then
     err "docker is not available"
     exit 1
@@ -229,7 +236,7 @@ function install_cri_dockerd_if_needed() {
   need_cri_dockerd
 
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
-    if systemctl is-active cri-docker.socket; then
+    if systemctl is-active cri-docker.socket >/dev/null; then
       v="$(cri-dockerd --version 2>&1 | awk '{print $2}')"
       msg "cri-dockerd already installed, version: $v"
       return
@@ -555,12 +562,12 @@ EOF
 
 function reset_cluster() {
   msg "reset cluster"
-  local extra=
+  local params=
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
-    extra="$extra --cri-socket unix://$CRI_DOCKERD_SOC"
-    msg "set cri-socket as unix://$CRI_DOCKERD_SOC"
+    params="$params --cri-socket $CRI_DOCKERD_SOC"
+    msg "set cri-socket as $CRI_DOCKERD_SOC"
   fi
-  $SUDO kubeadm reset $extra
+  $SUDO kubeadm reset $params
 
   msg "release cni0 if any"
   if ip link show cni0 >/dev/null 2>&1; then
@@ -591,29 +598,83 @@ function init_cluster() {
   # different CNI addon requires different pod-network-cider, here is for flannel
   local cidr=$(perl -ne 'print $1 if /"Network":\s*"([^"]+)"/' $flannel)
 
-  local extra=
+  local name="$(hostname)"
+  local ckey="$(kubeadm certs certificate-key)"
+  local token="$(kubeadm token generate)"
+  local params="--kubernetes-version=$VERSION --apiserver-advertise-address=$ADDRESS --pod-network-cidr=$cidr --token=$token"
+  local extras=
+  local repo_config=
+  local sans_config='  - "localhost"'
+  local cpep_config=
+  local ckey_config=
+  local sock_config=
+  local sock_option=
+
   if [[ -n $SANS ]]; then
-    extra="$extra --apiserver-cert-extra-sans=$SANS"
+    params="$params --apiserver-cert-extra-sans=$SANS"
+    for s in $(echo $SANS | tr , '\n')
+    do
+      sans_config="$(printf '%s\n  - "%s"' "$sans_config" "$s")"
+    done
   fi
   if [[ -n $ENDPOINT ]]; then
-    extra="$extra --control-plane-endpoint=$ENDPOINT --upload-certs"
+    # need HA
+    params="$params --control-plane-endpoint=$ENDPOINT --certificate-key=$ckey --upload-certs"
+    cpep_config="controlPlaneEndpoint: \"$ENDPOINT\""
+    ckey_config="certificateKey: \"$ckey\""
+    extras="$extras --upload-certs"
+    msg "control-plane endpoint specified, upload the certificates for HA setup"
   fi
   if [[ -n $NODE ]]; then
-    extra="$extra --node-name=$NODE"
+    params="$params --node-name=$NODE"
+    name="$NODE"
   fi
   if [[ $NEED_MIRROR == "y" ]]; then
     local repo="registry.aliyuncs.com/google_containers"
-    extra="$extra --image-repository $repo"
+    params="$params --image-repository $repo"
+    repo_config="imageRepository: \"$repo\""
     msg "mirror is required, use image repository: $repo"
   fi
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
-    extra="$extra --cri-socket unix://$CRI_DOCKERD_SOC"
-    msg "set cri-socket as unix://$CRI_DOCKERD_SOC"
+    sock_option="--cri-socket $CRI_DOCKERD_SOC"
+    sock_config="  criSocket: \"$CRI_DOCKERD_SOC\""
+    params="$params $sock_option"
+    msg "set cri-socket as $CRI_DOCKERD_SOC"
   fi
 
   # use the same cgroup driver as the container runtime (Docker)
   local cgroupdriver="$($DOCKER info -f {{.CgroupDriver}})"
-  # TODO: only supported by KubeletConfiguration
+
+  cat <<EOF > $INIT_CONFIG
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+bootstrapTokens:
+- token: "$token"
+  description: "kubeadm bootstrap token"
+  ttl: "24h"
+localAPIEndpoint:
+  advertiseAddress: "$ADDRESS"
+nodeRegistration:
+  name: "$name"
+$sock_config
+$ckey_config
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: $VERSION
+$cpep_config
+networking:
+  serviceSubnet: "10.96.0.0/16"
+  podSubnet: "$cidr"
+apiServer:
+  certSANs:
+$sans_config
+$repo_config
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: $cgroupdriver
+EOF
 
   # patch proxy env vars
   for e in no_proxy NO_PROXY
@@ -629,8 +690,12 @@ function init_cluster() {
     $CACHE_IMAGE load
   fi
 
-  msg "init k8s control-plane node, ver:$VERSION, api:$ADDRESS, cidr:$cidr, extra:'$extra'"
-  $SUDO kubeadm init --kubernetes-version=$VERSION --apiserver-advertise-address=$ADDRESS --pod-network-cidr=$cidr $extra
+  msg "init k8s control-plane node, ver:$VERSION, api:$ADDRESS"
+  msg "details in $INIT_CONFIG"
+  # TODO: remove $params once the --config way is stable
+  # for debug purpose
+#  $SUDO kubeadm init $params
+  $SUDO kubeadm init --config $INIT_CONFIG $extras
 
   # config
   msg "setup config to access cluster"
@@ -658,6 +723,44 @@ EOF
     perl -pe "$cmds" $flannel > $flannel_mod
     kubectl apply -f $flannel_mod
   fi
+
+  msg "generate instructions to join the cluster"
+  msg "details in $JOIN_MANUAL"
+  local apiserver="$ADDRESS:$PORT"
+  if [[ -n $ENDPOINT ]]; then
+    local host port
+    IFS=":" read host port <<< "$ENDPOINT"
+    if [[ -z $port ]]; then
+      port="$PORT"
+    fi
+    apiserver="$host:$port"
+  fi
+  local algo="sha256"
+  local capath="/etc/kubernetes/pki/ca.crt"
+  local cahash="$(openssl x509 -pubkey -in $capath \
+	  | openssl rsa -pubin -outform der 2>/dev/null \
+	  | openssl dgst -$algo -hex | sed 's/^.* //')"
+
+  cat <<EOF | tee $JOIN_MANUAL
+# to join a worker node
+sudo kubeadm join $apiserver $sock_option \\
+  --token $token \\
+  --discovery-token-ca-cert-hash $algo:$cahash
+
+EOF
+
+  if [[ -n $ENDPOINT ]]; then
+    cat <<EOF | tee -a $JOIN_MANUAL
+# to join a control-plane node
+sudo kubeadm join $apiserver $sock_option \\
+  --token $token \\
+  --discovery-token-ca-cert-hash $algo:$cahash \\
+  --control-plane \\
+  --certificate-key $ckey
+
+EOF
+  fi
+
 }
 
 main "$@"
