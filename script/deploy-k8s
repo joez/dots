@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.12.14
+# version: 23.03.12
 
 set -e
 
@@ -18,7 +18,8 @@ fi
 
 # IP of the primary interface on the host
 HOST_IP=$(ip route get 1 | head -1 | awk '{print $7}')
-HOST_DNS=$(hostname -f)
+HOST_DNS=$(perl -e 'use Net::Domain hostfqdn; print hostfqdn')
+HOST_NAME=$(perl -e 'use Net::Domain hostname; print hostname')
 
 K8S_NOPROXY=".svc,.svc.cluster.local"
 K8S_PKGS="kubelet kubeadm kubectl"
@@ -52,6 +53,10 @@ function msg() {
 
 function err() {
   echo "> $@" >&2
+}
+
+function realfile() {
+  [[ -L "$1" ]] && readlink -f $1 || echo $1
 }
 
 function usage() {
@@ -313,7 +318,7 @@ function install_k8s() {
       $SUDO dpkg -i $cachedir/*.deb
       msg "no auto update for $K8S_PKGS"
       $SUDO apt-mark hold $K8S_PKGS
-    elif [[ $dist == "centos" ]]; then
+    elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
       msg "install $cachedir/*.rpm"
       $SUDO yum install -y -C --disablerepo=* $cachedir/*.rpm
       msg "enabled and start kubelet"
@@ -362,7 +367,7 @@ EOF
 
     msg "save the installed packages to $cachedir"
     cp -r /var/cache/apt/archives/*.deb $cachedir
-  elif [[ $dist == "centos" ]]; then
+  elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
     local name="el7-$(uname -m)"
     local list="/etc/yum.repos.d/kubernetes.repo"
     local src="https://packages.cloud.google.com/yum/repos"
@@ -387,7 +392,7 @@ exclude=kubelet kubeadm kubectl
 EOF
 
     msg "enable yum cache"
-    local conf="/etc/yum.conf"
+    local conf="$(realfile /etc/yum.conf)"
     if grep "keepcache" $conf >/dev/null; then
       $SUDO perl -pi -e 's/(keepcache\s*=\s*).*$/${1}1/' $conf
     else
@@ -404,6 +409,12 @@ EOF
     $SUDO yum install -y $wanted --disableexcludes=kubernetes
     msg "enabled and start kubelet"
     $SUDO systemctl enable --now kubelet
+
+    # openEuler use containernetworking-plugins instead of kubernetes-cni
+    if [[ $dist == "openeuler" ]] && [[ -d "/usr/libexec/cni" ]]; then
+      msg "setup cni for $dist"
+      $SUDO mkdir -p /opt/cni/bin && $SUDO ln -sf -t $_ /usr/libexec/cni/*
+    fi
 
     msg "save the installed packages to $cachedir"
     if [[ -d /var/cache/dnf ]]; then
@@ -440,7 +451,7 @@ function ensure_installed() {
       msg "here is one solution: reset cluster and delete k8s, then deploy it again"
       local dist=$(dist_name)
       local cmd='apt autoremove'
-      if [[ $dist == "centos" ]]; then
+      if [[ $dist == "centos" || $dist == "openeuler" ]]; then
         cmd='yum remove'
       fi
       msg "  $SELF -R && $SUDO $cmd $K8S_PKGS"
@@ -464,7 +475,7 @@ function ensure_swapoff() {
       $SUDO systemctl mask $swap
     fi
     msg "disable any swap device in fstab"
-    $SUDO perl -pi -e 's/^(.+(none|swap)\s+swap.+)/#$1/ unless /^#/' /etc/fstab
+    $SUDO perl -pi -e 's/^(.+(none|swap)\s+swap.+)/#$1/ unless /^#/' $(realfile /etc/fstab)
     msg "swapoff -a"
     $SUDO swapoff -a
   else
@@ -598,7 +609,7 @@ function init_cluster() {
   # different CNI addon requires different pod-network-cider, here is for flannel
   local cidr=$(perl -ne 'print $1 if /"Network":\s*"([^"]+)"/' $flannel)
 
-  local name="$(hostname)"
+  local name="$HOST_NAME"
   local ckey="$(kubeadm certs certificate-key)"
   local token="$(kubeadm token generate)"
   local params="--kubernetes-version=$VERSION --apiserver-advertise-address=$ADDRESS --pod-network-cidr=$cidr --token=$token"
