@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 22.12.14
+# version: 23.03.12
 
 set -e
 
@@ -85,6 +85,8 @@ SERVICE_CONFIG="/etc/systemd/system/docker.service.d/http-proxy.conf"
 DOCKERD_CONFIG="/etc/docker/daemon.json"
 DOCKERC_CONFIG="~/.docker/config.json"
 
+DIST="$(source /etc/os-release && echo $ID | tr '[:upper:]' '[:lower:]')"
+
 # export proxy settings
 if [[ -n $PROXY_HOST ]]; then
   export http_proxy=$PROXY_HOST:${PROXY_PORT:-$PORT_HTTP}
@@ -96,7 +98,7 @@ else
   export no_proxy=
 fi
 
-for v in DRY_RUN PROXY_HOST PROXY_PORT PROXY_SKIP PORT_HTTP PORT_HTTPS \
+for v in DRY_RUN DIST PROXY_HOST PROXY_PORT PROXY_SKIP PORT_HTTP PORT_HTTPS \
   MIRROR REPO_MIRROR SERVICE_CONFIG DOCKERD_CONFIG DOCKERC_CONFIG; do
   eval echo "$v: \${$v}"
 done
@@ -128,12 +130,25 @@ if [[ -z $(which docker) ]]; then
     fi
   fi
 
-  mirror_opt=""
-  if [[ $MIRROR == "yes" ]]; then
-    mirror_opt="--mirror Aliyun"
-  fi
   echo "need mirror: $MIRROR"
-  curl -fsSL https://get.docker.com | bash -s docker $mirror_opt
+  if [[ $DIST == "openeuler" ]]; then
+    # WARN: only verified on openEuler 22.04 LTS
+    # TODO: install latest version once openEuler has fuse-overlayfs
+    repo_url="https://download.docker.com/linux/centos/docker-ce.repo"
+    if [[ $MIRROR == "yes" ]]; then
+      repo_url="https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo"
+    fi
+    $SUDO yum-config-manager --add-repo $repo_url
+    echo "8" | $SUDO tee /etc/yum/vars/centosver
+    $SUDO sed -i 's/\$releasever/\$centosver/g' /etc/yum.repos.d/docker-ce.repo
+    $SUDO yum install -y docker-ce-19.03.15-3.el8
+  else
+    mirror_opt=""
+    if [[ $MIRROR == "yes" ]]; then
+      mirror_opt="--mirror Aliyun"
+    fi
+    curl -fsSL https://get.docker.com | bash -s docker $mirror_opt
+  fi
   echo "docker installation is done"
 fi
 
