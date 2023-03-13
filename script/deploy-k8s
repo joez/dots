@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.03.12
+# version: 23.03.13
 
 set -e
 
@@ -40,7 +40,7 @@ MIRROR=auto           # mirror option
 MIRRORS="yes no auto" # valid mirror options
 RESET=n               # reset cluster first
 DRY_RUN=n             # dry run or not
-OFFLINE=n             # no external network
+OFFLINE=${OFFLINE:-n} # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
 
@@ -86,13 +86,17 @@ Offline mode:
   will be cached in the folder "$CACHE/" when deploying it on a machine with
   internet connection, then copy the cache to the target machine and deploy it
 
-  These cached files will be loaded in offline mode when necessary:
-  * The software packages in "$CACHE/packages"
-  * The container images in "$CACHE/images"
-
   You can save all the downloaded container images by this command:
 
     $CACHE_IMAGE
+
+  These cached files will be loaded in offline mode when necessary:
+
+  * The software packages in "$CACHE/packages"
+  * The container images in "$CACHE/images"
+
+  The offline mode will be enabled automatically through network detection.
+  You can also force it by setting environment variable "OFFLINE=y"
 
 Examples:
 
