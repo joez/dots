@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.03.13
+# version: 23.04.10
 
 set -e
 
@@ -612,6 +612,7 @@ function init_cluster() {
 
   # different CNI addon requires different pod-network-cider, here is for flannel
   local cidr=$(perl -ne 'print $1 if /"Network":\s*"([^"]+)"/' $flannel)
+  local cidr_svc="10.96.0.0/16"
 
   local name="$HOST_NAME"
   local ckey="$(kubeadm certs certificate-key)"
@@ -679,7 +680,7 @@ kind: ClusterConfiguration
 kubernetesVersion: $VERSION
 $cpep_config
 networking:
-  serviceSubnet: "10.96.0.0/16"
+  serviceSubnet: $cidr_svc
   podSubnet: "$cidr"
 apiServer:
   certSANs:
@@ -692,11 +693,12 @@ cgroupDriver: $cgroupdriver
 EOF
 
   # patch proxy env vars
+  local no_proxy_more="$K8S_NOPROXY,$cidr,$cidr_svc"
   for e in no_proxy NO_PROXY
   do
     if [[ -n ${!e} ]]; then
-      msg "patch $e: $K8S_NOPROXY,$cidr"
-      eval $e="$K8S_NOPROXY,$cidr,${!e}"
+      msg "patch $e: $no_proxy_more"
+      eval $e="$no_proxy_more,${!e}"
     fi
   done
 
@@ -709,8 +711,8 @@ EOF
   msg "details in $INIT_CONFIG"
   # TODO: remove $params once the --config way is stable
   # for debug purpose
-#  $SUDO kubeadm init $params
-  $SUDO kubeadm init --config $INIT_CONFIG $extras
+#  $SUDO env $(env | grep -i proxy) kubeadm init $params
+  $SUDO env $(env | grep -i proxy) kubeadm init --config $INIT_CONFIG $extras
 
   # config
   msg "setup config to access cluster"
