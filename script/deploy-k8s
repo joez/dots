@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.04.10
+# version: 23.04.14
 
 set -e
 
@@ -556,19 +556,30 @@ mkdir -p $(dirname $0)/images && cd $_
 
 if [[ $1 == "load" ]]; then
   echo "load images:"
-  images="$(ls *.tar.gz 2>/dev/null || true)"
+  images="$(find . -type f -name '*tar.gz')"
   for i in $images; do
-    echo "loading $i"
-    $DOCKER load -i $i
+    file="${i#./}"
+    echo "loading $file"
+    if [[ $DRY_RUN != 'y' ]]; then
+      $DOCKER load -i $file
+    fi
   done
 else
   echo "save images:"
-  images="$($DOCKER images --format '{{.Repository}}:{{.Tag}}')"
+  images="$($DOCKER images -f 'dangling=false' --format '{{.Repository}}:{{.Tag}}')"
   for i in $images; do
+    if [[ -n "$RE_IGNORE" && $i =~ $RE_IGNORE ]]; then
+      echo "ignore $i" && continue
+    fi
+    file="${i//:/-}.tar.gz"
     echo "saving $i"
-    $DOCKER save $i | gzip > ${i##*/}.tar.gz;
+    echo "    -> $file"
+    if [[ $DRY_RUN != 'y' ]]; then
+      mkdir -p $(dirname $i) && $DOCKER save $i | gzip > $file;
+    fi
   done
 fi
+echo "done"
 EOF
 
     chmod a+x $CACHE_IMAGE
