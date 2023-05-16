@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.04.14
+# version: 23.05.16
 
 set -e
 
@@ -23,10 +23,15 @@ HOST_NAME=$(perl -e 'use Net::Domain hostname; print hostname')
 
 K8S_NOPROXY=".svc,.svc.cluster.local"
 K8S_PKGS="kubelet kubeadm kubectl"
-CACHE="cache"                         # the cache directory
-CACHE_IMAGE="$CACHE/image"            # script to save or load images
 INIT_CONFIG="kubeadm-init.yaml"       # config file for "kubeadm init"
 JOIN_MANUAL="kubeadm-join.txt"        # "kubeadm join" instructions
+
+CACHE="cache"                         # the cache directory
+CACHE_IMAGE="$CACHE/image"            # script to save or load images
+CACHE_IMAGES="$CACHE/images"          # exported container images
+CACHE_MANIFESTS="$CACHE/manifests"    # manifest files in YAML format
+CACHE_PACKAGES="$CACHE/packages"      # software packages, such as .deb
+CACHE_RUN="$CACHE/run/$SELF"          # runtime generated files
 
 ADDRESS=$HOST_IP      # API server IP address
 PORT=6443             # API server IP port
@@ -90,10 +95,17 @@ Offline mode:
 
     $CACHE_IMAGE
 
-  These cached files will be loaded in offline mode when necessary:
+  These cached files will be loaded in offline mode when necessary.
 
-  * The software packages in "$CACHE/packages"
-  * The container images in "$CACHE/images"
+  The directory structure:
+
+  - $CACHE
+    |- images    (exported container images)
+    |- manifests (manifest files in YAML format)
+    |- packages  (software packages, such as *.deb)
+       |- *      (by os, e.g.: ubuntu, centos, common)
+    |- run       (runtime generated files)
+       |- *      (by component, e.g.: $SELF)
 
   The offline mode will be enabled automatically through network detection.
   You can also force it by setting environment variable "OFFLINE=y"
@@ -253,7 +265,7 @@ function install_cri_dockerd_if_needed() {
 
     local ver=$CRI_DOCKERD_VER
     local url="https://github.com/Mirantis/cri-dockerd"
-    local dir="$CACHE/packages/common/cri-dockerd"
+    local dir="$CACHE_PACKAGES/common/cri-dockerd"
 
     mkdir -p $dir
 
@@ -311,7 +323,7 @@ function install_k8s() {
   local dist=$(dist_name)
   msg "install k8s on \"$dist\""
 
-  local cachedir="$CACHE/packages/$dist"
+  local cachedir="$CACHE_PACKAGES/$dist"
   mkdir -p $cachedir
 
   if [[ $OFFLINE == "y" ]]; then
@@ -533,10 +545,12 @@ function validate_sudo() {
 function ensure_workdir() {
   msg "ensure workdir"
 
-  if [[ ! -d $CACHE ]]; then
-    msg "create dir: $CACHE"
-    mkdir -p $CACHE
-  fi
+  for d in $CACHE_IMAGES $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
 
   if [[ ! -f $CACHE_IMAGE ]]; then
     msg "create script: $CACHE_IMAGE"
@@ -614,8 +628,8 @@ function init_cluster() {
 
   [[ $OFFLINE == "y" ]] && msg "WARNING: offline mode, cache must be ready"
 
-  local flannel="$CACHE/kube-flannel.yml"
-  local flannel_mod="$CACHE/kube-flannel.mod.yml"
+  local flannel="$CACHE_MANIFESTS/kube-flannel.yml"
+  local flannel_mod="$CACHE_RUN/kube-flannel.mod.yml"
   msg "download flannel manifest"
   if [[ ! -e $flannel ]]; then
     curl https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml > $flannel
