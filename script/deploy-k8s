@@ -167,7 +167,7 @@ do
 done
 shift $((OPTIND-1))
 
-for v in DOCKER HOST_IP ADDRESS BACKEND ENDPOINT NODE SANS VERSION MIRROR RESET NO_CLUSTER NO_WORKLOAD DRY_RUN
+for v in ADDRESS BACKEND DOCKER DRY_RUN ENDPOINT HOST_IP MIRROR NODE NO_CLUSTER NO_WORKLOAD OFFLINE RESET SANS VERSION
 do
   eval echo "$v: \${$v}"
 done
@@ -225,15 +225,17 @@ function check_prerequisites() {
     err "docker is not available"
     exit 1
   fi
-  msg "check network"
-  if ! curl -s -m 3 ifconfig.co >/dev/null; then
-    err "can't access external network, continue for offline scenario"
-    OFFLINE="y"
-  else
-    msg "check docker pull"
-    if ! $DOCKER pull hello-world >/dev/null 2>&1; then
-      err "docker pull can't work, check docker configuration first"
-      exit 1
+  if [[ $OFFLINE != 'y' ]]; then
+    msg "check network"
+    if ! curl -s -m 3 ifconfig.co >/dev/null; then
+      err "can't access external network, continue for offline scenario"
+      OFFLINE="y"
+    else
+      msg "check docker pull"
+      if ! $DOCKER pull hello-world >/dev/null 2>&1; then
+        err "docker pull can't work, check docker configuration first"
+        exit 1
+      fi
     fi
   fi
 }
@@ -294,10 +296,10 @@ function need_mirror() {
   msg "is mirror needed"
   if [[ $MIRROR == "auto" ]]; then
     MIRROR=yes # default as needed
-    msg "check whether we can access google cloud"
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
+      msg "check whether we can access google cloud"
       local target="k8s.gcr.io/pause"
       if $DOCKER pull $target >/dev/null 2>&1; then
         msg "$DOCKER pull $target is OK"
