@@ -247,7 +247,7 @@ function need_cri_dockerd() {
   local target="1.24.0" # the version with dockershim removed
   local smaller="$(printf "%s\n" $target $VERSION | sort -V | head -n1)"
   if [[ $smaller == $target ]]; then
-    msg "the requested version $VERSION is greater than $target"
+    msg "the requested k8s version $VERSION is >= $target"
     NEED_CRI_DOCKERD=y
   fi
   msg "need cri-dockerd: $NEED_CRI_DOCKERD"
@@ -259,16 +259,25 @@ function install_cri_dockerd_if_needed() {
   need_cri_dockerd
 
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
+    local ver=$CRI_DOCKERD_VER
+    local url="https://github.com/Mirantis/cri-dockerd"
+
     if systemctl is-active cri-docker.socket >/dev/null; then
       v="$(cri-dockerd --version 2>&1 | awk '{print $2}')"
       msg "cri-dockerd already installed, version: $v"
-      return
+      if [[ $RESET == "y" || $v != $ver ]]; then
+        msg "uninstall current version $v first"
+	$SUDO systemctl stop cri-docker
+	$SUDO rm -f /usr/bin/cri-dockerd
+	$SUDO rm -f /etc/systemd/system/cri-docker.{service,socket}
+        $SUDO systemctl daemon-reload
+      else
+        msg "same as target version $ver, skip"
+        return
+      fi
     fi
 
-    local ver=$CRI_DOCKERD_VER
-    local url="https://github.com/Mirantis/cri-dockerd"
-    local dir="$CACHE_PACKAGES/common/cri-dockerd"
-
+    local dir="$CACHE_PACKAGES/common/cri-dockerd-$ver"
     mkdir -p $dir
 
     if [[ $OFFLINE == "y" ]]; then
@@ -276,15 +285,19 @@ function install_cri_dockerd_if_needed() {
       msg "try to install from the cache"
     else
       msg "download into $dir"
-      curl -sL ${url}/releases/download/v${ver}/cri-dockerd-${ver}.amd64.tgz | tar xz -C $dir --strip-components=1
+      if [[ ! -e $dir/cri-dockerd ]]; then
+        curl -sL ${url}/releases/download/v${ver}/cri-dockerd-${ver}.amd64.tgz | tar xz -C $dir --strip-components=1
+      fi
       for f in cri-docker.{service,socket}; do
-        curl -sL $url/raw/v${ver}/packaging/systemd/$f > $dir/$f
+	if [[ ! -e $dir/$f ]]; then
+          curl -sL $url/raw/v${ver}/packaging/systemd/$f > $dir/$f
+	fi
       done
     fi
 
-    msg "now install it"
-    $SUDO cp $dir/cri-dockerd /usr/bin/
-    $SUDO cp $dir/cri-docker.{service,socket} /etc/systemd/system/
+    msg "install cri-dockerd $ver"
+    $SUDO install $dir/cri-dockerd /usr/bin/
+    $SUDO install $dir/cri-docker.{service,socket} /etc/systemd/system/
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable cri-docker.service
     $SUDO systemctl enable --now cri-docker.socket
