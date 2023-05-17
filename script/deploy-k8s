@@ -368,6 +368,10 @@ function install_k8s() {
     return
   fi
 
+  local packages_old="$CACHE_RUN/packages-old.txt"
+  local packages_new="$CACHE_RUN/packages-new.txt"
+  local packages_delta="$CACHE_RUN/packages-delta.txt"
+
   if [[ $dist == "ubuntu" ]]; then
     local codename="xenial"  # the official doc use xenial for all
     local list="/etc/apt/sources.list.d/kubernetes.list"
@@ -385,8 +389,8 @@ function install_k8s() {
 deb $src kubernetes-$codename main
 EOF
 
-    msg "clean apt cache before installation"
-    $SUDO apt clean
+    local apt_cache_dir="/var/cache/apt/archives"
+    ls -1 $apt_cache_dir/*.deb | sort > $packages_old
 
     local pkgsss="$K8S_PKGS "
     local wanted="${pkgsss// /=$VERSION-00 }"
@@ -396,8 +400,7 @@ EOF
     msg "no auto update for $K8S_PKGS"
     $SUDO apt-mark hold $K8S_PKGS
 
-    msg "save the installed packages to $cachedir"
-    cp -r /var/cache/apt/archives/*.deb $cachedir
+    ls -1 $apt_cache_dir/*.deb | sort > $packages_new
   elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
     local name="el7-$(uname -m)"
     local list="/etc/yum.repos.d/kubernetes.repo"
@@ -431,8 +434,11 @@ EOF
     fi
     $SUDO yum makecache
 
-    msg "clean yum cache before installation"
-    $SUDO yum clean packages
+    if [[ -d /var/cache/dnf ]]; then
+      ls -1 /var/cache/dnf/*/packages/*.rpm | sort > $packages_old
+    else
+      ls -1 /var/cache/yum/*/*/*/packages/*.rpm | sort > $packages_old
+    fi
 
     local pkgsss="$K8S_PKGS "
     local wanted="${pkgsss// /-$VERSION }"
@@ -441,22 +447,28 @@ EOF
     msg "enabled and start kubelet"
     $SUDO systemctl enable --now kubelet
 
+    if [[ -d /var/cache/dnf ]]; then
+      ls -1 /var/cache/dnf/*/packages/*.rpm | sort > $packages_new
+    else
+      ls -1 /var/cache/yum/*/*/*/packages/*.rpm | sort > $packages_new
+    fi
+
     # openEuler use containernetworking-plugins instead of kubernetes-cni
     if [[ $dist == "openeuler" ]] && [[ -d "/usr/libexec/cni" ]]; then
       msg "setup cni for $dist"
       $SUDO mkdir -p /opt/cni/bin && $SUDO ln -sf -t $_ /usr/libexec/cni/*
     fi
-
-    msg "save the installed packages to $cachedir"
-    if [[ -d /var/cache/dnf ]]; then
-      cp /var/cache/dnf/*/packages/*.rpm $cachedir
-    else
-      cp /var/cache/yum/*/*/*/packages/*.rpm $cachedir
-    fi
   else
     err "dist \"$dist\" is not supported!"
     exit 1
   fi
+
+  msg "save the installed packages to $cachedir"
+  comm -13 $packages_old $packages_new > $packages_delta
+  while read f; do
+    msg "saving $f"
+    cp -t $cachedir $f
+  done <$packages_delta
 }
 
 function ensure_selinuxoff() {
