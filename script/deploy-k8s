@@ -49,7 +49,7 @@ OFFLINE=${OFFLINE:-n} # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
 
-CRI_DOCKERD_VER=0.2.6                              # cri-dockerd version
+CRI_DOCKERD_VER="${CRI_DOCKERD_VER:-0.3.2}"        # cri-dockerd version
 CRI_DOCKERD_SOC="unix:///var/run/cri-dockerd.sock" # cri-dockerd socket path
 
 function msg() {
