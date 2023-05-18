@@ -334,6 +334,27 @@ function need_mirror() {
   msg "need mirror: $NEED_MIRROR"
 }
 
+function save_package_list() {
+  local path="${1:?argument missing}"
+  local dist=$(dist_name)
+  msg "save current package list to $path"
+
+  mkdir -p $(dirname $path)
+
+  if [[ $dist == "ubuntu" ]]; then
+    ls -1 /var/cache/apt/archives/*.deb | sort > $path
+  elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
+    if [[ -d /var/cache/dnf ]]; then
+      ls -1 /var/cache/dnf/*/packages/*.rpm | sort > $path
+    else
+      ls -1 /var/cache/yum/*/*/*/packages/*.rpm | sort > $path
+    fi
+  else
+    err "dist \"$dist\" is not supported!"
+    exit 1
+  fi
+}
+
 function install_k8s() {
   local dist=$(dist_name)
   msg "install k8s on \"$dist\""
@@ -370,8 +391,8 @@ function install_k8s() {
 
   local packages_old="$CACHE_RUN/packages-old.txt"
   local packages_new="$CACHE_RUN/packages-new.txt"
-  local packages_delta="$CACHE_RUN/packages-delta.txt"
 
+  save_package_list "$packages_old"
   if [[ $dist == "ubuntu" ]]; then
     local codename="xenial"  # the official doc use xenial for all
     local list="/etc/apt/sources.list.d/kubernetes.list"
@@ -389,9 +410,6 @@ function install_k8s() {
 deb $src kubernetes-$codename main
 EOF
 
-    local apt_cache_dir="/var/cache/apt/archives"
-    ls -1 $apt_cache_dir/*.deb | sort > $packages_old
-
     local pkgsss="$K8S_PKGS "
     local wanted="${pkgsss// /=$VERSION-00 }"
     msg "apt update and install: $wanted"
@@ -400,7 +418,6 @@ EOF
     msg "no auto update for $K8S_PKGS"
     $SUDO apt-mark hold $K8S_PKGS
 
-    ls -1 $apt_cache_dir/*.deb | sort > $packages_new
   elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
     local name="el7-$(uname -m)"
     local list="/etc/yum.repos.d/kubernetes.repo"
@@ -434,12 +451,6 @@ EOF
     fi
     $SUDO yum makecache
 
-    if [[ -d /var/cache/dnf ]]; then
-      ls -1 /var/cache/dnf/*/packages/*.rpm | sort > $packages_old
-    else
-      ls -1 /var/cache/yum/*/*/*/packages/*.rpm | sort > $packages_old
-    fi
-
     local pkgsss="$K8S_PKGS "
     local wanted="${pkgsss// /-$VERSION }"
     msg "install $wanted"
@@ -447,23 +458,20 @@ EOF
     msg "enabled and start kubelet"
     $SUDO systemctl enable --now kubelet
 
-    if [[ -d /var/cache/dnf ]]; then
-      ls -1 /var/cache/dnf/*/packages/*.rpm | sort > $packages_new
-    else
-      ls -1 /var/cache/yum/*/*/*/packages/*.rpm | sort > $packages_new
-    fi
-
     # openEuler use containernetworking-plugins instead of kubernetes-cni
     if [[ $dist == "openeuler" ]] && [[ -d "/usr/libexec/cni" ]]; then
       msg "setup cni for $dist"
       $SUDO mkdir -p /opt/cni/bin && $SUDO ln -sf -t $_ /usr/libexec/cni/*
     fi
+
   else
     err "dist \"$dist\" is not supported!"
     exit 1
   fi
+  save_package_list "$packages_new"
 
   msg "save the installed packages to $cachedir"
+  local packages_delta="$CACHE_RUN/packages-delta.txt"
   comm -13 $packages_old $packages_new > $packages_delta
   while read f; do
     msg "saving $f"
