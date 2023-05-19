@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.05.19
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+VERSION="0.58.0"      # version to deploy
+DRY_RUN=n             # print information only
+RESET=n               # reset the deployment
+UNINSTALL=n           # reset the deployment and uninstall components
+OFFLINE=${OFFLINE:-n} # no external network
+
+BASEURL="https://github.com/kubevirt/kubevirt/releases/download"
+VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
+TIMEOUT="300s"
+
+CACHE="cache"
+CACHE_MANIFESTS="$CACHE/manifests"
+CACHE_PACKAGES="$CACHE/packages/common"
+
+function msg() {
+  echo "> $@"
+}
+
+function err() {
+  echo "> $@" >&2
+}
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [-v <ver>] [-R] [-U] [-n] [-h]
+
+  Deploy KubeVirt in Kubernetes cluster the easy way
+
+  -v <ver>:  target version, default: $VERSION
+  -R:        reset the deployment, default: $RESET
+  -U:        reset the deployment and uninstall components, default: $UNINSTALL
+  -n:        print information only, default: $DRY_RUN
+  -h:        print the usage message
+
+Cache:
+
+  To speed up deployment, the required files will be cached at "$CACHE"
+
+Examples:
+
+  1. Deploy KubeVirt
+     $SELF
+
+  2. Reset the deployment
+     $SELF -R
+
+  3. Deploy KubeVirt with specific version
+     $SELF -v 0.59.0
+
+  4. Reset the deployment and uninstall
+     $SELF -U
+
+Version: $SELF_VERSION
+EOF
+
+}
+
+function current_version() {
+  local version="$VERSION"
+  if [[ -n $(which virtctl) ]]; then
+    version="$(virtctl version | head -n1 | sed -n 's/.*GitVersion:"\([^"]*\).*/\1/p')"
+    version=${version#v}
+  fi
+  echo $version
+}
+
+function main() {
+  # adjust default version if already deployed
+  VERSION="$(current_version)"
+
+  while getopts ":v:hnRU" opt
+  do
+    case $opt in
+      v ) VERSION=${OPTARG#v};;
+      R ) RESET=y;;
+      U ) RESET=y && UNINSTALL=y;;
+      n ) DRY_RUN=y;;
+      h ) usage && exit;;
+      * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
+    esac
+  done
+  shift $((OPTIND-1))
+
+  for v in CACHE DRY_RUN RESET UNINSTALL VERSION
+  do
+    eval echo "$v: \${$v}"
+  done
+
+  [[ $DRY_RUN == "y" ]] && exit
+
+  validate_sudo
+  check_prerequisites
+  check_network
+  ensure_workdir
+
+  local manifest_list="kubevirt-operator.yaml kubevirt-cr.yaml"
+  local manifest_dir="$CACHE_MANIFESTS/kubevirt-$VERSION"
+  local package_list="virtctl"
+  local package_dir="$CACHE_PACKAGES/kubevirt-$VERSION"
+  local install_dir="/usr/local/bin"
+
+  mkdir -p $manifest_dir $package_dir
+
+  msg "download manifests"
+  for n in $manifest_list; do
+    local f=$manifest_dir/$n
+    if [[ ! -e "$f" ]]; then
+      msg "download $n -> $f"
+      curl -L $BASEURL/v$VERSION/$n > $f
+    fi
+  done
+
+  local LABS_BASE="https://kubevirt.io/labs/manifests"
+  for n in vm.yaml; do
+    local f=$manifest_dir/$n
+    if [[ ! -e "$f" ]]; then
+      msg "download $n -> $f"
+      curl -L $LABS_BASE/$n > $f
+    fi
+  done
+
+  if [[ $RESET == "y" ]]; then
+    # https://kubevirt.io/user-guide/operations/updating_and_deletion/#deleting-kubevirt
+    msg "delete kubevirt deployment (if any)" && (
+      set +e
+      kubectl delete -n kubevirt kubevirt kubevirt --wait=true
+      kubectl delete apiservices v1.subresources.kubevirt.io
+      kubectl delete mutatingwebhookconfigurations virt-api-mutator
+      kubectl delete validatingwebhookconfigurations virt-operator-validator
+      kubectl delete validatingwebhookconfigurations virt-api-validator
+      kubectl delete -f $manifest_dir/kubevirt-operator.yaml
+    ) || true
+  else
+    msg "deploy kubevirt"
+    for n in $manifest_list; do
+      local f=$manifest_dir/$n
+      msg "apply $f"
+      kubectl apply -f $f
+    done
+  fi
+
+  for n in $package_list; do
+    local f=$package_dir/$n
+
+    if [[ ! -e "$f" ]]; then
+      msg "download $n -> $f"
+      curl -L $BASEURL/v$VERSION/$n-v$VERSION-$VARIANT > $f
+      chmod a+x $f
+    fi
+
+    if [[ $UNINSTALL == "y" ]]; then
+      msg "uninstall $n"
+      $SUDO rm -f $install_dir/$n
+    else
+      msg "install $n"
+      $SUDO install $f $install_dir
+    fi
+  done
+
+  if [[ $RESET != "y" ]]; then
+    msg "wait until ready (timeout: $TIMEOUT)"
+    kubectl -n kubevirt wait kv/kubevirt --timeout $TIMEOUT --for condition=Available
+
+    cat <<EOF
+
+# here are some tips to follow:
+# deploy a sample VM
+kubectl apply -f $manifest_dir/vm.yaml
+# get the deployed VM
+kubectl get vms
+# start the VM
+virtctl start testvm
+# check instance status
+kubectl get vmis
+# access console
+virtctl console testvm
+EOF
+  fi
+
+  msg "done"
+}
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+function check_prerequisites() {
+  msg "check prerequisites"
+  if [[ -z $(which kubelet) ]]; then
+    err "kubelet is not available"
+    exit 1
+  fi
+  if [[ -z $(which curl) ]]; then
+    err "curl is not available"
+    exit 1
+  fi
+  if ! kubectl version --short; then
+    err "can't access k8s cluster"
+    exit 1
+  fi
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! curl -s -m 3 -I example.com >/dev/null; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_MANIFESTS $CACHE_PACKAGES; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+main "$@"
