@@ -5,6 +5,7 @@
 set -e
 
 SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 HOST_NAME="$(cat /proc/sys/kernel/hostname)"
 
 SUDO="sudo"
@@ -52,6 +53,8 @@ Examples:
 
   4. Deploy with specified proxy host and port (911 for http, 912 for https)
      $SELF -H 911 -S 912 http://proxy.example.com
+
+Usage: $SELF_VERSION
 EOF
 )
 
