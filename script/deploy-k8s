@@ -219,6 +219,10 @@ function dist_name() {
   echo $dist
 }
 
+function minimal_version() {
+  echo $(printf "%s\n" $@ | sort -V | head -n1)
+}
+
 function check_prerequisites() {
   msg "check prerequisites"
   if [[ -z $(which perl) ]]; then
@@ -256,10 +260,9 @@ NEED_CRI_DOCKERD=n
 function need_cri_dockerd() {
   msg "is cri-dockerd needed"
 
-  local target="1.24.0" # the version with dockershim removed
-  local smaller="$(printf "%s\n" $target $VERSION | sort -V | head -n1)"
-  if [[ $smaller == $target ]]; then
-    msg "the requested k8s version $VERSION is >= $target"
+  local since="1.24.0" # dockershim was removed since v1.24.0
+  if [[ $(minimal_version $since $VERSION) == $since ]]; then
+    msg "the requested k8s version $VERSION is >= $since"
     NEED_CRI_DOCKERD=y
   fi
   msg "need cri-dockerd: $NEED_CRI_DOCKERD"
@@ -794,7 +797,12 @@ EOF
   # untaint control-plane
   if [[ $NO_WORKLOAD != "y" ]]; then
     msg "allow to schedule pods on the control-plane"
-    kubectl taint nodes --all node-role.kubernetes.io/master-
+    local taint="node-role.kubernetes.io/master"
+    local since='1.25.0' # taint was renamed since v1.25.0
+    if [[ $(minimal_version $since $VERSION) == $since ]]; then
+      taint="node-role.kubernetes.io/control-plane"
+    fi
+    kubectl taint nodes --all $taint-
   fi
 
   # install flannel to manage the network
