@@ -44,6 +44,7 @@ VERSION=1.23.0        # k8s stable version
 MIRROR=auto           # mirror option
 MIRRORS="yes no auto" # valid mirror options
 RESET=n               # reset cluster first
+UNINSTALL=n           # reset cluster and uninstall components
 DRY_RUN=n             # dry run or not
 OFFLINE=${OFFLINE:-n} # no external network
 NO_CLUSTER=n          # do not init cluster
@@ -67,7 +68,7 @@ function realfile() {
 function usage() {
   cat <<EOF
 Usage: $SELF [-a <addr>] [-b <type>] [-e <addr>] [-s <sans>] [-m <type>]
-  [-N <name>] [-v <ver>] [-r] [-R] [-C] [-W] [-n] [-h]
+  [-N <name>] [-v <ver>] [-r] [-R] [-U] [-C] [-W] [-n] [-h]
 
   Deploy Kubernetes and initialize a cluster the easy way
 
@@ -80,6 +81,7 @@ Usage: $SELF [-a <addr>] [-b <type>] [-e <addr>] [-s <sans>] [-m <type>]
   -v <ver>:  k8s version, default: $VERSION
   -r:        reset k8s cluster first, default: $RESET
   -R:        reset k8s cluster and stop, same as -rC
+  -U:        reset cluster and uninstall components, default: $UNINSTALL
   -C:        do not initialize cluster, default: $NO_CLUSTER
   -W:        do not schedule workload on control-plane node, default: $NO_WORKLOAD
   -n:        dry run, print out information only, default: $DRY_RUN
@@ -132,6 +134,9 @@ Examples:
 
   5. Deploy a control-plane node with DNS name vip.k8s.io
      $SELF -W -e vip.k8s.io
+
+  6. Reset the cluster and uninstall components
+     $SELF -U
 EOF
 
 }
@@ -148,7 +153,7 @@ function current_version() {
 # adjust default version if already deployed
 VERSION="$(current_version)"
 
-while getopts ":a:b:e:s:m:N:v:hCWnRr" opt
+while getopts ":a:b:e:s:m:N:v:hCWnRrU" opt
 do
   case $opt in
     a ) ADDRESS=$OPTARG;;
@@ -170,6 +175,7 @@ do
     v ) VERSION=${OPTARG#v};;
     r ) RESET=y;;
     R ) RESET=y && NO_CLUSTER=y;;
+    U ) RESET=y && NO_CLUSTER=y && UNINSTALL=y;;
     n ) DRY_RUN=y;;
     C ) NO_CLUSTER=y;;
     W ) NO_WORKLOAD=y;;
@@ -179,7 +185,8 @@ do
 done
 shift $((OPTIND-1))
 
-for v in ADDRESS BACKEND DOCKER DRY_RUN ENDPOINT HOST_IP MIRROR NODE NO_CLUSTER NO_WORKLOAD OFFLINE RESET SANS VERSION
+for v in ADDRESS BACKEND DOCKER DRY_RUN ENDPOINT HOST_IP MIRROR NODE \
+         NO_CLUSTER NO_WORKLOAD OFFLINE RESET SANS UNINSTALL VERSION
 do
   eval echo "$v: \${$v}"
 done
@@ -190,24 +197,25 @@ function main() {
   warn_as_root
   validate_sudo
   check_prerequisites
+  check_network
+  check_mirror
   ensure_workdir
   ensure_swapoff
   ensure_iptables
   ensure_selinuxoff
   ensure_firewalloff
-  need_mirror
   ensure_installed
   if [[ $RESET == "y" ]]; then
     reset_cluster
   fi
-  [[ $NO_CLUSTER != "y" ]] && init_cluster
+  if [[ $NO_CLUSTER != "y" ]]; then
+    init_cluster
+  fi
+  if [[ $UNINSTALL == "y" ]]; then
+    ensure_uninstalled
+  fi
 
   msg "done"
-  cat <<EOF
-here are some useful commands:
-- check status: kubectl get pods -A
-- enable bash completion: source <(kubectl completion bash)
-EOF
 }
 
 function dist_name() {
@@ -241,10 +249,13 @@ function check_prerequisites() {
     err "docker is not available"
     exit 1
   fi
+}
+
+function check_network() {
+  msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
-    msg "check network"
     if ! curl -s -m 3 -I example.com >/dev/null; then
-      err "can't access external network, continue for offline scenario"
+      msg "can't access external network"
       OFFLINE="y"
     else
       msg "check docker pull"
@@ -254,6 +265,7 @@ function check_prerequisites() {
       fi
     fi
   fi
+  msg "offline mode: $OFFLINE"
 }
 
 NEED_CRI_DOCKERD=n
@@ -266,6 +278,17 @@ function need_cri_dockerd() {
     NEED_CRI_DOCKERD=y
   fi
   msg "need cri-dockerd: $NEED_CRI_DOCKERD"
+}
+
+function ensure_cri_dockerd_uninstalled() {
+  msg "ensure cri-dockerd uninstalled"
+
+  if systemctl is-active cri-docker.socket >/dev/null; then
+    $SUDO systemctl stop cri-docker
+    $SUDO rm -f /usr/bin/cri-dockerd
+    $SUDO rm -f /etc/systemd/system/cri-docker.{service,socket}
+    $SUDO systemctl daemon-reload
+  fi
 }
 
 function install_cri_dockerd_if_needed() {
@@ -282,10 +305,7 @@ function install_cri_dockerd_if_needed() {
       msg "cri-dockerd already installed, version: $v"
       if [[ $RESET == "y" || $v != $ver ]]; then
         msg "uninstall current version $v first"
-	$SUDO systemctl stop cri-docker
-	$SUDO rm -f /usr/bin/cri-dockerd
-	$SUDO rm -f /etc/systemd/system/cri-docker.{service,socket}
-        $SUDO systemctl daemon-reload
+	ensure_cri_dockerd_uninstalled
       else
         msg "same as target version $ver, skip"
         return
@@ -320,7 +340,7 @@ function install_cri_dockerd_if_needed() {
 }
 
 NEED_MIRROR=n
-function need_mirror() {
+function check_mirror() {
   msg "is mirror needed"
   if [[ $MIRROR == "auto" ]]; then
     MIRROR=yes # default as needed
@@ -511,21 +531,34 @@ function ensure_installed() {
     msg "already installed, version: $ver"
     if [[ $VERSION != $ver ]]; then
       msg "the requested version ($VERSION) is different from the installed one"
-      msg "we only support to switch control-plane version"
-      msg "do it by yourself if you really want to switch k8s version"
-      msg "here is one solution: reset cluster and delete k8s, then deploy it again"
-      local dist=$(dist_name)
-      local cmd='apt autoremove'
-      if [[ $dist == "centos" || $dist == "openeuler" ]]; then
-        cmd='yum remove'
-      fi
-      msg "  $SELF -R && $SUDO $cmd $K8S_PKGS"
+      msg "we only support to switch control-plane version without reinstalling"
+      msg "if you want to switch k8s version, reset cluster and delete k8s first"
+      msg "use the command:"
+      msg "  $SELF -U"
     fi
   else
     install_k8s
   fi
 
   install_cri_dockerd_if_needed
+}
+
+function ensure_uninstalled() {
+  msg "ensure k8s uninstalled"
+
+  if [[ -n $(which kubelet) ]]; then
+    local dist=$(dist_name)
+    if [[ $dist == "ubuntu" ]]; then
+      $SUDO apt autoremove $K8S_PKGS
+    elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
+      $SUDO yum remove $K8S_PKGS
+    else
+      err "dist \"$dist\" is not supported!"
+      exit 1
+    fi
+  fi
+
+  ensure_cri_dockerd_uninstalled
 }
 
 function ensure_swapoff() {
@@ -857,6 +890,14 @@ sudo kubeadm join $apiserver $sock_option \\
 EOF
   fi
 
+  cat <<EOF
+# here are some useful commands:
+# check status
+kubectl get pods -A
+
+# enable bash completion
+source <(kubectl completion bash)
+EOF
 }
 
 main "$@"
