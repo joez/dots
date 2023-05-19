@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.17
+# version: 23.05.19
 
 set -e
 
@@ -118,8 +118,8 @@ Examples:
   2. Reset the cluster and deploy again
      $SELF -r
 
-  3. Reset the cluster and deploy again with specific version
-     $SELF -r -v 1.21.0
+  3. Reset the cluster and deploy the specific version
+     $SELF -r -v 1.24.0
 
   4. Deploy a cluster with one control-plane and one worker node
      # on control-plane node
@@ -135,6 +135,18 @@ Examples:
 EOF
 
 }
+
+function current_version() {
+  local version="$VERSION"
+  if [[ -n $(which kubeadm) ]]; then
+    version="$(kubeadm version -o short)"
+    version=${version#v}
+  fi
+  echo $version
+}
+
+# adjust default version if already deployed
+VERSION="$(current_version)"
 
 while getopts ":a:b:e:s:m:N:v:hCWnRr" opt
 do
@@ -492,8 +504,7 @@ function ensure_installed() {
   msg "ensure k8s installed"
 
   if [[ -n $(which kubeadm) ]]; then
-    local ver="$(kubeadm version -o short)"
-    ver=${ver#v}
+    local ver="$(current_version)"
     msg "already installed, version: $ver"
     if [[ $VERSION != $ver ]]; then
       msg "the requested version ($VERSION) is different from the installed one"
