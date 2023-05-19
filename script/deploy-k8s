@@ -4,7 +4,8 @@
 
 set -e
 
-SELF=`basename $0`
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 
 SUDO="sudo"
 if [[ $(id -u) == "0" ]]; then
@@ -137,6 +138,8 @@ Examples:
 
   6. Reset the cluster and uninstall components
      $SELF -U
+
+Version: $SELF_VERSION
 EOF
 
 }
