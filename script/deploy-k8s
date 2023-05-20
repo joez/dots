@@ -840,12 +840,11 @@ EOF
   # untaint control-plane
   if [[ $NO_WORKLOAD != "y" ]]; then
     msg "allow to schedule pods on the control-plane"
-    local taint="node-role.kubernetes.io/master"
-    local since='1.25.0' # taint was renamed since v1.25.0
-    if [[ $(minimal_version $since $VERSION) == $since ]]; then
-      taint="node-role.kubernetes.io/control-plane"
-    fi
-    kubectl taint nodes --all $taint-
+    # new name was added at v1.24.0 and the old one was removed at v1.25.0
+    # try them all for better compatibility
+    for n in master control-plane; do
+      kubectl taint nodes --all node-role.kubernetes.io/$n- || true
+    done
   fi
 
   # install flannel to manage the network
