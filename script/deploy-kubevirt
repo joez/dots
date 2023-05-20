@@ -211,7 +211,7 @@ function check_prerequisites() {
     err "curl is not available"
     exit 1
   fi
-  if ! kubectl version --short; then
+  if ! kubectl version; then
     err "can't access k8s cluster"
     exit 1
   fi
