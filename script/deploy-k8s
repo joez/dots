@@ -51,8 +51,12 @@ OFFLINE=${OFFLINE:-n} # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
 
-CRI_DOCKERD_VER="${CRI_DOCKERD_VER:-0.3.2}"        # cri-dockerd version
-CRI_DOCKERD_SOC="unix:///var/run/cri-dockerd.sock" # cri-dockerd socket path
+FLANNEL_VERSION="${FLANNEL_VERSION:-0.21.5}"                  # flannel version
+FLANNEL_BASEURL="https://raw.githubusercontent.com/flannel-io/flannel"
+
+CRI_DOCKERD_VERSION="${CRI_DOCKERD_VERSION:-0.3.2}"           # cri-dockerd version
+CRI_DOCKERD_BASEURL="https://github.com/Mirantis/cri-dockerd" # cri-dockerd repo url
+CRI_DOCKERD_SOCKET="unix:///var/run/cri-dockerd.sock"         # cri-dockerd socket path
 
 function msg() {
   echo "> $@"
@@ -300,8 +304,8 @@ function install_cri_dockerd_if_needed() {
   need_cri_dockerd
 
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
-    local ver=$CRI_DOCKERD_VER
-    local url="https://github.com/Mirantis/cri-dockerd"
+    local ver="$CRI_DOCKERD_VERSION"
+    local url="$CRI_DOCKERD_BASEURL"
 
     if systemctl is-active cri-docker.socket >/dev/null; then
       v="$(cri-dockerd --version 2>&1 | awk '{print $2}')"
@@ -397,7 +401,7 @@ function install_k8s() {
   local dist=$(dist_name)
   msg "install k8s on \"$dist\""
 
-  local cachedir="$CACHE_PACKAGES/$dist"
+  local cachedir="$CACHE_PACKAGES/$dist/k8s-$VERSION"
   mkdir -p $cachedir
 
   if [[ $OFFLINE == "y" ]]; then
@@ -689,8 +693,8 @@ function reset_cluster() {
   msg "reset cluster"
   local params=
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
-    params="$params --cri-socket $CRI_DOCKERD_SOC"
-    msg "set cri-socket as $CRI_DOCKERD_SOC"
+    params="$params --cri-socket $CRI_DOCKERD_SOCKET"
+    msg "set cri-socket as $CRI_DOCKERD_SOCKET"
   fi
   $SUDO kubeadm reset $params
 
@@ -713,11 +717,14 @@ function init_cluster() {
 
   [[ $OFFLINE == "y" ]] && msg "WARNING: offline mode, cache must be ready"
 
-  local flannel="$CACHE_MANIFESTS/kube-flannel.yml"
+  local flannel_dir="$CACHE_MANIFESTS/flannel-$FLANNEL_VERSION"
+  mkdir -p $flannel_dir
+
+  local flannel="$flannel_dir/kube-flannel.yml"
   local flannel_mod="$CACHE_RUN/kube-flannel.mod.yml"
   msg "download flannel manifest"
   if [[ ! -e $flannel ]]; then
-    curl https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml > $flannel
+    curl $FLANNEL_BASEURL/v$FLANNEL_VERSION/Documentation/kube-flannel.yml > $flannel
   fi
 
   # different CNI addon requires different pod-network-cider, here is for flannel
@@ -762,10 +769,10 @@ function init_cluster() {
     msg "mirror is required, use image repository: $repo"
   fi
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
-    sock_option="--cri-socket $CRI_DOCKERD_SOC"
-    sock_config="  criSocket: \"$CRI_DOCKERD_SOC\""
+    sock_option="--cri-socket $CRI_DOCKERD_SOCKET"
+    sock_config="  criSocket: \"$CRI_DOCKERD_SOCKET\""
     params="$params $sock_option"
-    msg "set cri-socket as $CRI_DOCKERD_SOC"
+    msg "set cri-socket as $CRI_DOCKERD_SOCKET"
   fi
 
   # use the same cgroup driver as the container runtime (Docker)
