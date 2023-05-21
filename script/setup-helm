@@ -1,33 +1,184 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 21.5.31
+# version: 23.05.21
 
 set -e
 
-version="${1:-3.6.0}"
-variant="linux-amd64"
-name="helm-v$version-$variant"
-file="$name.tar.gz"
-cache="cache"
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 
-OS=$(uname | tr '[:upper:]' '[:lower:]')
-if [[ $OS != "linux" ]]; then
-  echo "only support linux"
-  exit 1
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
 fi
 
-mkdir -p $cache
-cd $cache
+VERSION="3.10.0"      # version to install
+DRY_RUN=n             # print information only
+UNINSTALL=n           # reset the deployment and uninstall components
+OFFLINE=${OFFLINE:-n} # no external network
 
-echo "download $file"
-if [[ ! -e "$file" ]]; then
-  curl -LO https://get.helm.sh/$file
-fi
+BASEURL="https://get.helm.sh"
+VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
 
-echo "install helm"
-tar -zxf $file
-sudo mv $variant/helm /usr/local/bin/helm
-rm -rf $variant
+CACHE="cache"
+CACHE_PACKAGES="$CACHE/packages/common"
 
-echo "done, check version"
-helm version
+function msg() {
+  echo "> $@"
+}
+
+function err() {
+  echo "> $@" >&2
+}
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [-v <ver>] [-U] [-n] [-h]
+
+  Setup Helm the easy way
+
+  -v <ver>:  target version, default: $VERSION
+  -U:        uninstall Helm, default: $UNINSTALL
+  -n:        print information only, default: $DRY_RUN
+  -h:        print the usage message
+
+Cache:
+
+  To speed up deployment, the required files will be cached at "$CACHE"
+
+Examples:
+
+  1. Install Helm
+     $SELF
+
+  2. Uninstall Helm
+     $SELF -U
+
+  3. Install Helm with specific version
+     $SELF -v 3.6.0
+
+Version: $SELF_VERSION
+EOF
+
+}
+
+function main() {
+  # adjust default version if already deployed
+  VERSION="$(current_version)"
+
+  while getopts ":v:hnU" opt
+  do
+    case $opt in
+      v ) VERSION=${OPTARG#v};;
+      U ) UNINSTALL=y;;
+      n ) DRY_RUN=y;;
+      h ) usage && exit;;
+      * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
+    esac
+  done
+  shift $((OPTIND-1))
+
+  for v in CACHE DRY_RUN UNINSTALL VERSION
+  do
+    eval echo "$v: \${$v}"
+  done
+
+  [[ $DRY_RUN == "y" ]] && exit
+
+  validate_sudo
+  check_prerequisites
+  check_network
+  ensure_workdir
+
+  local install_dir="/usr/local/bin"
+  local install_bin="/usr/local/bin/helm"
+  local package_dir="$CACHE_PACKAGES/helm-$VERSION"
+  local package_bin="$package_dir/helm"
+
+  mkdir -p $package_dir
+
+  if [[ ! -e "$package_bin" ]]; then
+    if [[ $OFFLINE == "y" ]]; then
+      msg "WARNING: offline mode, cache must be ready"
+      msg "try to install from the cache"
+    else
+      msg "download into $package_dir"
+      curl -L $BASEURL/helm-v$VERSION-$VARIANT.tar.gz | tar xz -C $package_dir --strip-components=1
+    fi
+  fi
+
+  if [[ $UNINSTALL == "y" ]]; then
+    msg "uninstall helm"
+    $SUDO rm -f $install_bin
+  else
+    msg "install helm"
+    $SUDO install $package_bin $install_bin
+  fi
+
+  cat <<EOF
+
+# here are some tips to follow:
+helm help
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo list
+helm repo update
+helm search repo bitnami
+helm show chart bitnami/nginx
+helm upgrade -i nginx bitnami/nginx
+helm uninstall nginx
+EOF
+
+  echo "done"
+}
+
+function current_version() {
+  local version="$VERSION"
+  if [[ -n $(which helm) ]]; then
+    version="$(helm version --template '{{.Version}}')"
+    version=${version#v}
+  fi
+  echo $version
+}
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+function check_prerequisites() {
+  msg "check prerequisites"
+  if [[ -z $(which curl) ]]; then
+    err "curl is not available"
+    exit 1
+  fi
+  if ! kubectl version >/dev/null 2>&1; then
+    err "can't access k8s cluster"
+    msg "WARNING: helm will not work without k8s cluster!"
+  fi
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! curl -s -m 3 -I example.com >/dev/null; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_PACKAGES; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+main "$@"
