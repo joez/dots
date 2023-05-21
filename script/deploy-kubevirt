@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.19
+# version: 23.05.21
 
 set -e
 
@@ -211,7 +211,7 @@ function check_prerequisites() {
     err "curl is not available"
     exit 1
   fi
-  if ! kubectl version; then
+  if ! kubectl version >/dev/null 2>&1; then
     err "can't access k8s cluster"
     exit 1
   fi
