@@ -1,39 +1,67 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.08
+# version: 23.05.21
 
 set -e
 
 SELF="$(basename $0)"
 SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
-HOST_NAME="$(cat /proc/sys/kernel/hostname)"
 
 SUDO="sudo"
 if [[ $(id -u) == "0" ]]; then
   SUDO=""
 fi
 
-PROXY_HOST=""
-PROXY_PORT=""
-PROXY_SKIP="localhost,$HOSTNAME,istio-system.svc,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+DOCKER="$SUDO docker"
+if id -nG | grep -qw docker; then
+  DOCKER="docker"
+fi
+
+PRIVATE_CIDR="127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+HOSTNAME="$(cat /proc/sys/kernel/hostname)"
+DIST="$(source /etc/os-release && echo $ID | tr '[:upper:]' '[:lower:]')"
+
+DRY_RUN="n"             # print information only
+MIRROR="auto"           # mirror option
+MIRRORS="yes no auto"   # valid mirror options
+OFFLINE="${OFFLINE:-n}" # no external network
 PORT_HTTP="912"
 PORT_HTTPS="912"
+PROXY_HOST=""
+PROXY_PORT=""
+PROXY_SKIP="localhost,$HOSTNAME,istio-system.svc,$PRIVATE_CIDR"
 REPO_MIRROR="https://hub-mirror.c.163.com"
-MIRROR=auto           # mirror option
-MIRRORS="yes no auto" # valid mirror options
+VERSION="latest"        # version to install
 
-DRY_RUN="n"
+CACHE="cache"
+CACHE_PACKAGES="$CACHE/packages/$DIST"
+CACHE_RUN="$CACHE/run/$SELF"
 
-HELP=$(cat <<EOF
+SERVICE_CONFIG="/etc/systemd/system/docker.service.d/http-proxy.conf"
+DOCKERD_CONFIG="/etc/docker/daemon.json"
+DOCKERC_CONFIG="~/.docker/config.json"
+
+function msg() {
+  echo "> $@"
+}
+
+function err() {
+  echo "> $@" >&2
+}
+
+function usage() {
+  cat <<EOF
 Usage: $SELF [-M <mirror>] [-N <noproxy>] [-H <port>] [-S <port>] [-m <type>]
-  [-n] [-h] [<host>] [<port>]
-  Install Docker and configure it, e.g. proxy, mirror
+  [-v <ver>] [-n] [-h] [<host>] [<port>]
 
-  -M <mirror>:  registry mirror, default: $REPO_MIRROR
+  Install Docker and configure it the easy way.
+
+  -M <mirror>:  Docker registry mirror, default: $REPO_MIRROR
   -N <noproxy>: no_proxy settings, default: $PROXY_SKIP
   -H <port>:    proxy port for http, default: $PORT_HTTP
   -S <port>:    proxy port for https, default: $PORT_HTTPS
-  -m <type>:    mirror option [$MIRRORS], default: $MIRROR
+  -m <type>:    install via mirror [$MIRRORS], default: $MIRROR
+  -v <ver>:     target version, default: $VERSION
   -n:           dry run, print out information only, default: $DRY_RUN
   -h:           print the usage message
 
@@ -54,123 +82,214 @@ Examples:
   4. Deploy with specified proxy host and port (911 for http, 912 for https)
      $SELF -H 911 -S 912 http://proxy.example.com
 
-Usage: $SELF_VERSION
+Version: $SELF_VERSION
 EOF
-)
 
-while getopts ":N:M:H:S:m:nh" opt
-do
-  case $opt in
-    M ) REPO_MIRROR=$OPTARG;;
-    N ) PROXY_SKIP=$OPTARG;;
-    H ) PORT_HTTP=$OPTARG;;
-    S ) PORT_HTTPS=$OPTARG;;
-    m ) MIRROR=$OPTARG
-        if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
-          echo "invalid mirror option $MIRROR"
-          usage && exit 1
-        fi
-        ;;
-    n ) DRY_RUN='y';;
-    h ) echo "$HELP" && exit;;
-    * ) echo "no such option: $opt" && exit 1;;
-  esac
-done
-shift $((OPTIND-1))
+}
 
-if (( $# >= 1 )); then
-  PROXY_HOST="$1"
-fi
-if (( $# >= 2 )); then
-  PROXY_PORT="$2"
-fi
+function main() {
+  # adjust default version if already deployed
+  local v="$(current_version)"
+  VERSION="${v:-$VERSION}"
 
-SERVICE_CONFIG="/etc/systemd/system/docker.service.d/http-proxy.conf"
-DOCKERD_CONFIG="/etc/docker/daemon.json"
-DOCKERC_CONFIG="~/.docker/config.json"
+  while getopts ":N:M:H:S:m:v:nh" opt
+  do
+    case $opt in
+      M ) REPO_MIRROR=$OPTARG;;
+      N ) PROXY_SKIP=$OPTARG;;
+      H ) PORT_HTTP=$OPTARG;;
+      S ) PORT_HTTPS=$OPTARG;;
+      m ) MIRROR=$OPTARG
+          if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
+            err "invalid mirror option $MIRROR"
+            usage && exit 1
+          fi
+          ;;
+      v ) VERSION=${OPTARG#v};;
+      n ) DRY_RUN='y';;
+      h ) usage && exit;;
+      * ) usage && err "invalid option: $OPTARG" && exit 1;;
+    esac
+  done
+  shift $((OPTIND-1))
 
-DIST="$(source /etc/os-release && echo $ID | tr '[:upper:]' '[:lower:]')"
+  if (( $# >= 1 )); then
+    PROXY_HOST="$1"
+  fi
+  if (( $# >= 2 )); then
+    PROXY_PORT="$2"
+  fi
 
-# export proxy settings
-if [[ -n $PROXY_HOST ]]; then
-  export http_proxy=$PROXY_HOST:${PROXY_PORT:-$PORT_HTTP}
-  export https_proxy=$PROXY_HOST:${PROXY_PORT:-$PORT_HTTPS}
-  export no_proxy=$PROXY_SKIP
-else
-  export http_proxy=
-  export https_proxy=
-  export no_proxy=
-fi
+  # export proxy settings
+  if [[ -n $PROXY_HOST ]]; then
+    export http_proxy=$PROXY_HOST:${PROXY_PORT:-$PORT_HTTP}
+    export https_proxy=$PROXY_HOST:${PROXY_PORT:-$PORT_HTTPS}
+    export no_proxy=$PROXY_SKIP
+  else
+    export http_proxy=
+    export https_proxy=
+    export no_proxy=
+  fi
 
-for v in DRY_RUN DIST PROXY_HOST PROXY_PORT PROXY_SKIP PORT_HTTP PORT_HTTPS \
-  MIRROR REPO_MIRROR SERVICE_CONFIG DOCKERD_CONFIG DOCKERC_CONFIG; do
-  eval echo "$v: \${$v}"
-done
+  for v in CACHE DIST DOCKERC_CONFIG DOCKERD_CONFIG DRY_RUN MIRROR OFFLINE PORT_HTTP PORT_HTTPS \
+	   PROXY_HOST PROXY_PORT PROXY_SKIP REPO_MIRROR SERVICE_CONFIG VERSION; do
+    eval echo "$v: \${$v}"
+  done
 
-[[ $DRY_RUN == "y" ]] && exit
+  [[ $DRY_RUN == "y" ]] && exit
 
-echo "check prerequisites"
-if [[ -z $(which curl) ]]; then
-  echo "curl is not available"
-  exit 1
-fi
-if [[ -z $(which python3) ]]; then
-  echo "python3 is not available"
-  exit 1
-fi
+  warn_as_root
+  validate_sudo
+  check_prerequisites
+  check_network
+  check_mirror
+  ensure_workdir
+  ensure_installed
+  ensure_configured
 
-# ensure Docker is installed
-if [[ -z $(which docker) ]]; then
-  echo "docker is not available, install it"
+  msg "done"
+}
+
+function warn_as_root() {
+  if [[ $(id -u) == "0" ]]; then
+    msg "you are running as root user, docker will be configured to root only!"
+    sleep 3
+  fi
+}
+
+function current_version() {
+  local version=
+  if [[ -n $(which docker) ]]; then
+    version="$($DOCKER version -f '{{.Server.Version}}')"
+    version=${version#v}
+  fi
+  echo $version
+}
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+function check_prerequisites() {
+  msg "check prerequisites"
+  if [[ -z $(which curl) ]]; then
+    err "curl is not available"
+    exit 1
+  fi
+  if [[ -z $(which python3) ]]; then
+    err "python3 is not available"
+    exit 1
+  fi
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! curl -s -m 3 -I example.com >/dev/null; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_PACKAGES $CACHE_RUN; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+
+NEED_MIRROR=n
+function check_mirror() {
+  msg "is mirror needed"
   if [[ $MIRROR == "auto" ]]; then
     MIRROR=yes # default as needed
-    echo "check whether we can access google cloud"
-    target="https://cloud.google.com"
-    if curl -s -m 5 $target >/dev/null 2>&1; then
-      echo "curl $target is OK"
-      MIRROR=no
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
     else
-      echo "curl $target is FAILED"
+      msg "check whether we can access google cloud"
+      local target="https://cloud.google.com"
+      if curl -s -m 5 $target >/dev/null 2>&1; then
+        msg "curl $target is OK"
+        MIRROR=no
+      else
+        msg "curl $target is FAILED"
+      fi
     fi
   fi
+  if [[ $MIRROR == "yes" ]]; then
+    NEED_MIRROR=y
+  fi
+  msg "need mirror: $NEED_MIRROR"
+}
 
-  echo "need mirror: $MIRROR"
-  if [[ $DIST == "openeuler" ]]; then
-    # WARN: only verified on openEuler 22.04 LTS
-    # TODO: install latest version once openEuler has fuse-overlayfs
-    repo_url="https://download.docker.com/linux/centos/docker-ce.repo"
-    if [[ $MIRROR == "yes" ]]; then
-      repo_url="https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo"
+function ensure_installed() {
+  msg "ensure docker is installed"
+  local installed="$(current_version)"
+
+  if [[ -z $installed ]]; then
+    msg "docker is not available, install it"
+
+    if [[ $DIST == "openeuler" ]]; then
+      # WARN: only verified on openEuler 22.04 LTS
+      # TODO: install latest version once openEuler has fuse-overlayfs
+      local repo_url="https://download.docker.com/linux/centos/docker-ce.repo"
+      if [[ $NEED_MIRROR == "yes" ]]; then
+        repo_url="https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo"
+      fi
+      $SUDO yum-config-manager --add-repo $repo_url
+      echo "8" | $SUDO tee /etc/yum/vars/centosver
+      $SUDO sed -i 's/\$releasever/\$centosver/g' /etc/yum.repos.d/docker-ce.repo
+      $SUDO yum install -y docker-ce-19.03.15-3.el8
+    else
+      local tool="$CACHE_RUN/get-docker.sh"
+      local opts=""
+      if [[ $NEED_MIRROR == "yes" ]]; then
+        opts="--mirror Aliyun"
+      fi
+      if [[ $VERSION != "latest" ]]; then
+	opts="$opts --version $VERSION"
+      fi
+      msg "install with opts: $opts"
+      curl -fsSL https://get.docker.com > $tool
+      $SUDO sh $tool $opts
     fi
-    $SUDO yum-config-manager --add-repo $repo_url
-    echo "8" | $SUDO tee /etc/yum/vars/centosver
-    $SUDO sed -i 's/\$releasever/\$centosver/g' /etc/yum.repos.d/docker-ce.repo
-    $SUDO yum install -y docker-ce-19.03.15-3.el8
+    msg "docker installation is done"
   else
-    mirror_opt=""
-    if [[ $MIRROR == "yes" ]]; then
-      mirror_opt="--mirror Aliyun"
+    msg "version $installed has already installed"
+    if [[ $VERSION != "latest" && $installed != $VERSION ]]; then
+      msg "WARNING: the target version $VERSION is different from the installed one"
     fi
-    curl -fsSL https://get.docker.com | bash -s docker $mirror_opt
   fi
-  echo "docker installation is done"
-fi
+}
 
-if [[ -e $SERVICE_CONFIG || -e $DOCKERD_CONFIG || -e $DOCKERC_CONFIG ]]; then
-  cat <<EOF
+function ensure_configured() {
+  msg "ensure docker is configured"
+
+  if [[ -e $SERVICE_CONFIG || -e $DOCKERD_CONFIG || -e $DOCKERC_CONFIG ]]; then
+    cat <<EOF
 any of the following configuration files already exist
 * $SERVICE_CONFIG
 * $DOCKERD_CONFIG
 * $DOCKERC_CONFIG
 EOF
-  read -p "overwrite them and continue? y/N: " result
-  if [[ $result != "y" ]]; then
-    exit
+    read -p "overwrite them and continue? y/N: " result
+    if [[ $result != "y" ]]; then
+      exit
+    fi
   fi
-fi
 
-echo "configure docker client: $DOCKERC_CONFIG"
-DOCKERC_CONFIG="$DOCKERC_CONFIG" python3 <<'EOF'
+  msg "configure docker client: $DOCKERC_CONFIG"
+  DOCKERC_CONFIG="$DOCKERC_CONFIG" python3 <<'EOF'
 import os, json, pathlib, collections
 
 nest_dict = lambda: collections.defaultdict(nest_dict)
@@ -192,23 +311,23 @@ with f.open('w') as fh:
   json.dump(d, fh, indent=4)
 EOF
 
-echo "configure docker daemon"
-echo "configure $SERVICE_CONFIG"
-$SUDO mkdir -p $(dirname $SERVICE_CONFIG)
-cat <<EOF | $SUDO tee $SERVICE_CONFIG
+  msg "configure docker daemon"
+  msg "configure $SERVICE_CONFIG"
+  $SUDO mkdir -p $(dirname $SERVICE_CONFIG)
+  cat <<EOF | $SUDO tee $SERVICE_CONFIG
 [Service]
 Environment="HTTP_PROXY=$http_proxy"
 Environment="HTTPS_PROXY=$https_proxy"
 Environment="NO_PROXY=$no_proxy"
 EOF
 
-echo "configure $DOCKERD_CONFIG"
-$SUDO mkdir -p $(dirname $DOCKERD_CONFIG)
-mirrors=""
-if [[ -n $REPO_MIRROR ]]; then
-  mirrors="\"registry-mirrors\": [\"$REPO_MIRROR\"],"
-fi
-cat <<EOF | $SUDO tee $DOCKERD_CONFIG
+  msg "configure $DOCKERD_CONFIG"
+  $SUDO mkdir -p $(dirname $DOCKERD_CONFIG)
+  local mirrors=""
+  if [[ -n $REPO_MIRROR ]]; then
+    mirrors="\"registry-mirrors\": [\"$REPO_MIRROR\"],"
+  fi
+  cat <<EOF | $SUDO tee $DOCKERD_CONFIG
 {
   "log-opts": {
     "max-size": "500m"
@@ -219,16 +338,18 @@ cat <<EOF | $SUDO tee $DOCKERD_CONFIG
 }
 EOF
 
-echo "enable docker service"
-$SUDO systemctl enable docker
+  msg "enable docker service"
+  $SUDO systemctl enable docker
 
-echo "restart docker service"
-$SUDO systemctl daemon-reload
-$SUDO systemctl restart docker
+  msg "restart docker service"
+  $SUDO systemctl daemon-reload
+  $SUDO systemctl restart docker
 
-if groups | grep -qwv docker; then
-  echo "add docker group to $USER"
-  $SUDO usermod -aG docker $USER
-  echo "logout and login again or reboot to take effect"
-fi
-echo "done"
+  if groups | grep -qwv docker; then
+    msg "add docker group to $USER"
+    $SUDO usermod -aG docker $USER
+    msg "logout and login again or reboot to take effect"
+  fi
+}
+
+main "$@"
