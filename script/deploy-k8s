@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.19
+# version: 23.05.22
 
 set -e
 
@@ -402,7 +402,6 @@ function install_k8s() {
   msg "install k8s on \"$dist\""
 
   local cachedir="$CACHE_PACKAGES/$dist/k8s-$VERSION"
-  mkdir -p $cachedir
 
   if [[ $OFFLINE == "y" ]]; then
     msg "WARNING: offline mode, cache must be ready"
@@ -515,6 +514,8 @@ EOF
   msg "save the installed packages to $cachedir"
   local packages_delta="$CACHE_RUN/packages-delta.txt"
   comm -13 $packages_old $packages_new > $packages_delta
+
+  mkdir -p $cachedir
   while read f; do
     msg "saving $f"
     cp -t $cachedir $f
