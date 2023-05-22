@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.21
+# version: 23.05.22
 
 set -e
 
@@ -31,6 +31,7 @@ PROXY_HOST=""
 PROXY_PORT=""
 PROXY_SKIP="localhost,$HOSTNAME,istio-system.svc,$PRIVATE_CIDR"
 REPO_MIRROR="https://hub-mirror.c.163.com"
+UNINSTALL=n             # uninstall completely
 VERSION="latest"        # version to install
 
 CACHE="cache"
@@ -39,7 +40,7 @@ CACHE_RUN="$CACHE/run/$SELF"
 
 SERVICE_CONFIG="/etc/systemd/system/docker.service.d/http-proxy.conf"
 DOCKERD_CONFIG="/etc/docker/daemon.json"
-DOCKERC_CONFIG="~/.docker/config.json"
+DOCKERC_CONFIG=~/.docker/config.json    # not quoted to expand tilde
 
 function msg() {
   echo "> $@"
@@ -52,7 +53,7 @@ function err() {
 function usage() {
   cat <<EOF
 Usage: $SELF [-M <mirror>] [-N <noproxy>] [-H <port>] [-S <port>] [-m <type>]
-  [-v <ver>] [-n] [-h] [<host>] [<port>]
+  [-v <ver>] [-U] [-n] [-h] [<host>] [<port>]
 
   Install Docker and configure it the easy way.
 
@@ -62,6 +63,7 @@ Usage: $SELF [-M <mirror>] [-N <noproxy>] [-H <port>] [-S <port>] [-m <type>]
   -S <port>:    proxy port for https, default: $PORT_HTTPS
   -m <type>:    install via mirror [$MIRRORS], default: $MIRROR
   -v <ver>:     target version, default: $VERSION
+  -U:           uninstall completely, default: $UNINSTALL
   -n:           dry run, print out information only, default: $DRY_RUN
   -h:           print the usage message
 
@@ -82,6 +84,9 @@ Examples:
   4. Deploy with specified proxy host and port (911 for http, 912 for https)
      $SELF -H 911 -S 912 http://proxy.example.com
 
+  5. Uninstall
+     $SELF -U
+
 Version: $SELF_VERSION
 EOF
 
@@ -92,7 +97,7 @@ function main() {
   local v="$(current_version)"
   VERSION="${v:-$VERSION}"
 
-  while getopts ":N:M:H:S:m:v:nh" opt
+  while getopts ":N:M:H:S:m:v:Unh" opt
   do
     case $opt in
       M ) REPO_MIRROR=$OPTARG;;
@@ -106,6 +111,7 @@ function main() {
           fi
           ;;
       v ) VERSION=${OPTARG#v};;
+      U ) UNINSTALL=y;;
       n ) DRY_RUN='y';;
       h ) usage && exit;;
       * ) usage && err "invalid option: $OPTARG" && exit 1;;
@@ -144,8 +150,13 @@ function main() {
   check_network
   check_mirror
   ensure_workdir
-  ensure_installed
-  ensure_configured
+  ensure_cleanedup
+  if [[ $UNINSTALL == "y" ]]; then
+    ensure_uninstalled
+  else
+    ensure_installed
+    ensure_configured
+  fi
 
   msg "done"
 }
@@ -232,6 +243,20 @@ function check_mirror() {
   msg "need mirror: $NEED_MIRROR"
 }
 
+function ensure_cleanedup() {
+  msg "ensure old docker is cleaned up"
+
+  if [[ $DIST == "centos" || $DIST == "openeuler" ]]; then
+    $SUDO yum remove docker docker-client docker-client-latest docker-common \
+      docker-latest docker-latest-logrotate docker-logrotate docker-engine || true
+  elif [[ $DIST == "ubuntu" || $DIST == "debian" ]]; then
+    $SUDO apt remove docker docker-engine docker.io containerd runc || true
+  else
+    err "\"$DIST\" is not supported!"
+    exit 1
+  fi
+}
+
 function ensure_installed() {
   msg "ensure docker is installed"
   local installed="$(current_version)"
@@ -268,8 +293,44 @@ function ensure_installed() {
     msg "version $installed has already installed"
     if [[ $VERSION != "latest" && $installed != $VERSION ]]; then
       msg "WARNING: the target version $VERSION is different from the installed one"
+      msg "uninstall current version with following command and install again:"
+      msg "  $SELF -U"
     fi
   fi
+}
+
+function ensure_uninstalled() {
+  msg "ensure docker is uninstalled"
+
+  if [[ $DIST == "centos" || $DIST == "openeuler" ]]; then
+    $SUDO yum remove docker-ce docker-ce-cli containerd.io
+    $SUDO yum remove docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras || true
+  elif [[ $DIST == "ubuntu" || $DIST == "debian" ]]; then
+    $SUDO apt purge --auto-remove docker-ce docker-ce-cli containerd.io
+    $SUDO apt purge --auto-remove docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras || true
+  else
+    err "\"$DIST\" is not supported!"
+    exit 1
+  fi
+
+  msg "try to remove user configurtion"
+  for f in $SERVICE_CONFIG $DOCKERD_CONFIG $DOCKERC_CONFIG; do
+    if [[ -e $f ]]; then
+      read -p "delete $f? y/N: " result
+      if [[ $result == "y" ]]; then
+        $SUDO rm $f
+      fi
+    fi
+  done
+
+  # stop docker.socket in bogus state
+  $SUDO systemctl stop docker.socket
+
+  msg "images, containers and volumes arenâ€™t removed, do it by yourself:"
+  cat <<EOF
+$SUDO rm -rf /var/lib/docker
+$SUDO rm -rf /var/lib/containerd
+EOF
 }
 
 function ensure_configured() {
