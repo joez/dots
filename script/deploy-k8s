@@ -672,6 +672,9 @@ else
   echo "save images:"
   images="$($DOCKER images -f 'dangling=false' --format '{{.Repository}}:{{.Tag}}')"
   for i in $images; do
+    if [[ -n "$RE_WANTED" && ! $i =~ $RE_WANTED ]]; then
+      echo "not wanted $i" && continue
+    fi
     if [[ -n "$RE_IGNORE" && $i =~ $RE_IGNORE ]]; then
       echo "ignore $i" && continue
     fi
