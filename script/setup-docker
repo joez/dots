@@ -35,7 +35,7 @@ UNINSTALL=n             # uninstall completely
 VERSION="latest"        # version to install
 
 CACHE="cache"
-CACHE_PACKAGES="$CACHE/packages/$DIST"
+CACHE_PACKAGES="$CACHE/packages"
 CACHE_RUN="$CACHE/run/$SELF"
 
 SERVICE_CONFIG="/etc/systemd/system/docker.service.d/http-proxy.conf"
@@ -257,12 +257,60 @@ function ensure_cleanedup() {
   fi
 }
 
+function save_package_list() {
+  local path="${1:?argument missing}"
+  msg "save current package list to $path"
+
+  mkdir -p $(dirname $path)
+
+  if [[ $DIST == "ubuntu" || $DIST == "debian" ]]; then
+    ls -1 /var/cache/apt/archives/*.deb | sort > $path
+  elif [[ $DIST == "centos" || $DIST == "openeuler" ]]; then
+    if [[ -d /var/cache/dnf ]]; then
+      ls -1 /var/cache/dnf/*/packages/*.rpm | sort > $path
+    else
+      ls -1 /var/cache/yum/*/*/*/packages/*.rpm | sort > $path
+    fi
+  else
+    err "\"$DIST\" is not supported!"
+    exit 1
+  fi
+}
+
+function install_from_cache() {
+  local cachedir="${1:?argument missing}"
+  msg "install docker from cache: $cachedir"
+
+  if [[ $DIST == "ubuntu" || $DIST == "debian" ]]; then
+    msg "install $cachedir/*.deb"
+    $SUDO dpkg -i $cachedir/*.deb
+  elif [[ $DIST == "centos" || $DIST == "openeuler" ]]; then
+    msg "install $cachedir/*.rpm"
+    $SUDO yum install -y -C --disablerepo=* $cachedir/*.rpm
+  else
+    err "\"$DIST\" is not supported!"
+    exit 1
+  fi
+}
+
 function ensure_installed() {
   msg "ensure docker is installed"
   local installed="$(current_version)"
 
   if [[ -z $installed ]]; then
     msg "docker is not available, install it"
+
+    local cachedir="$CACHE_PACKAGES/$DIST/docker-$VERSION"
+    if [[ $OFFLINE == "y" ]]; then
+      msg "WARNING: offline mode, cache must be ready"
+      install_from_cache $cachedir
+      return
+    fi
+
+    local packages_old="$CACHE_RUN/packages-old.txt"
+    local packages_new="$CACHE_RUN/packages-new.txt"
+
+    save_package_list "$packages_old"
 
     if [[ $DIST == "openeuler" ]]; then
       # WARN: only verified on openEuler 22.04 LTS
@@ -285,9 +333,24 @@ function ensure_installed() {
 	opts="$opts --version $VERSION"
       fi
       msg "install with opts: $opts"
-      curl -fsSL https://get.docker.com > $tool
+      if [[ ! -e $tool ]]; then
+        curl -fsSL https://get.docker.com > $tool
+      fi
       $SUDO sh $tool $opts
     fi
+
+    save_package_list "$packages_new"
+
+    msg "save the installed packages to $cachedir"
+    local packages_delta="$CACHE_RUN/packages-delta.txt"
+    comm -13 $packages_old $packages_new > $packages_delta
+
+    mkdir -p $cachedir
+    while read f; do
+      msg "saving $f"
+      cp -t $cachedir $f
+    done <$packages_delta
+
     msg "docker installation is done"
   else
     msg "version $installed has already installed"
