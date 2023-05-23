@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.22
+# version: 23.05.23
 
 set -e
 
@@ -33,6 +33,11 @@ PROXY_SKIP="localhost,$HOSTNAME,istio-system.svc,$PRIVATE_CIDR"
 REPO_MIRROR="https://hub-mirror.c.163.com"
 UNINSTALL=n             # uninstall completely
 VERSION="latest"        # version to install
+
+BASE_URL="https://download.docker.com"
+BASE_URL_MIRROR="${BASE_URL_MIRROR:-https://mirrors.aliyun.com/docker-ce}"
+PKGS_ESSENTIAL="docker-ce docker-ce-cli containerd.io"     # DO NOT change the last one
+PKGS_OPTIONAL="docker-buildx-plugin docker-compose-plugin"
 
 CACHE="cache"
 CACHE_PACKAGES="$CACHE/packages"
@@ -277,6 +282,26 @@ function save_package_list() {
   fi
 }
 
+# DEPRECATED, for debug purpose only
+function install_via_script() {
+  local tool="$CACHE_RUN/get-docker.sh"
+  local opts=""
+
+  if [[ $NEED_MIRROR == "yes" ]]; then
+    opts="--mirror Aliyun"
+  fi
+  if [[ $VERSION != "latest" ]]; then
+    pts="$opts --version $VERSION"
+  fi
+
+  msg "install with opts: $opts"
+  if [[ ! -e $tool ]]; then
+    curl -fsSL https://get.docker.com > $tool
+  fi
+
+  $SUDO sh $tool $opts
+}
+
 function install_from_cache() {
   local cachedir="${1:?argument missing}"
   msg "install docker from cache: $cachedir"
@@ -287,6 +312,95 @@ function install_from_cache() {
   elif [[ $DIST == "centos" || $DIST == "openeuler" ]]; then
     msg "install $cachedir/*.rpm"
     $SUDO yum install -y -C --disablerepo=* $cachedir/*.rpm
+  else
+    err "\"$DIST\" is not supported!"
+    exit 1
+  fi
+}
+
+function install_docker() {
+  msg "install docker, version:$VERSION"
+
+  local base_url="$BASE_URL/linux"
+  if [[ $NEED_MIRROR == "yes" ]]; then
+    base_url="$BASE_URL_MIRROR/linux"
+  fi
+
+  if [[ $DIST == "openeuler" ]]; then
+    # TODO: install latest version once openEuler has fuse-overlayfs
+    msg "WARNING: only verified on openEuler 22.04 LTS"
+    local repo_url="$base_url/centos/docker-ce.repo"
+    $SUDO yum-config-manager --add-repo $repo_url
+    echo "8" | $SUDO tee /etc/yum/vars/centosver
+    $SUDO sed -i 's/\$releasever/\$centosver/g' /etc/yum.repos.d/docker-ce.repo
+    $SUDO yum install -y docker-ce-19.03.15-3.el8
+  elif [[ $DIST == "centos" ]]; then
+    msg "setup yum repository"
+    $SUDO yum install -y yum-utils
+    $SUDO yum-config-manager --add-repo $base_url/$DIST/docker-ce.repo
+
+    local pkgs_needed="$PKGS_ESSENTIAL"
+    if [[ $VERSION != "latest" ]]; then
+      msg "search packages for version $VERSION"
+      local allver="$(yum list --showduplicates docker-ce | sed '1,/Available Packages/d' | awk '{ print $2 }')"
+      local pkgver="$(echo "$allver" | grep $VERSION | tail -n1)"
+      if [[ -z $pkgver ]]; then
+        msg "available versions:"
+        echo "$(echo $allver | fold -s)"
+        err "$VERSION not found"
+	exit 1
+      else
+	msg "found $pkgver"
+	pkgver="$(echo $pkgver | cut -d':' -f 2)" # remove epoch
+	# replace space " " with "-$pkgver", the last one will not be replaced
+	pkgs_needed="${pkgs_needed// /-$pkgver }"
+      fi
+    fi
+    msg "install core components"
+    $SUDO yum install -y $pkgs_needed
+    msg "install optional components"
+    $SUDO yum install -y $PKGS_OPTIONAL || true
+  elif [[ $DIST == "ubuntu" || $DIST == "debian" ]]; then
+    # use apt-get instead of apt to keep the downloaded packages
+    msg "ensure gpupg is installed"
+    $SUDO apt-get update
+    $SUDO apt-get -y install ca-certificates curl gnupg
+
+    msg "add gpg key"
+    local keydir="/etc/apt/keyrings"
+    local gpgkey="$keydir/docker.gpg"
+    $SUDO install -m 0755 -d $keydir
+    curl -fsSL $base_url/$DIST/gpg | $SUDO gpg --dearmor --yes -o $gpgkey
+    $SUDO chmod a+r $gpgkey
+
+    msg "add source list"
+    local codename="$(. /etc/os-release && echo $VERSION_CODENAME)"
+    local archname="$(dpkg --print-architecture)"
+    cat <<EOF | $SUDO tee /etc/apt/sources.list.d/docker.list
+deb [arch=$archname signed-by=$gpgkey] $base_url/$DIST $codename stable
+EOF
+
+    $SUDO apt-get update
+    local pkgs_needed="$PKGS_ESSENTIAL"
+    if [[ $VERSION != "latest" ]]; then
+      msg "search packages for version $VERSION"
+      local allver="$(apt-cache madison docker-ce | awk '{ print $3 }')"
+      local pkgver="$(echo "$allver" | grep $VERSION | head -n1)"
+      if [[ -z $pkgver ]]; then
+        msg "available versions:"
+        echo "$(echo $allver | fold -s)"
+        err "$VERSION not found"
+	exit 1
+      else
+	msg "foud $pkgver"
+	# replace space " " with "=$pkgver", the last one will not be replaced
+	pkgs_needed="${pkgs_needed// /=$pkgver }"
+      fi
+    fi
+    msg "install core components"
+    $SUDO apt-get install -y $pkgs_needed
+    msg "install optional components"
+    $SUDO apt-get install -y $PKGS_OPTIONAL || true
   else
     err "\"$DIST\" is not supported!"
     exit 1
@@ -311,34 +425,7 @@ function ensure_installed() {
     local packages_new="$CACHE_RUN/packages-new.txt"
 
     save_package_list "$packages_old"
-
-    if [[ $DIST == "openeuler" ]]; then
-      # WARN: only verified on openEuler 22.04 LTS
-      # TODO: install latest version once openEuler has fuse-overlayfs
-      local repo_url="https://download.docker.com/linux/centos/docker-ce.repo"
-      if [[ $NEED_MIRROR == "yes" ]]; then
-        repo_url="https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo"
-      fi
-      $SUDO yum-config-manager --add-repo $repo_url
-      echo "8" | $SUDO tee /etc/yum/vars/centosver
-      $SUDO sed -i 's/\$releasever/\$centosver/g' /etc/yum.repos.d/docker-ce.repo
-      $SUDO yum install -y docker-ce-19.03.15-3.el8
-    else
-      local tool="$CACHE_RUN/get-docker.sh"
-      local opts=""
-      if [[ $NEED_MIRROR == "yes" ]]; then
-        opts="--mirror Aliyun"
-      fi
-      if [[ $VERSION != "latest" ]]; then
-	opts="$opts --version $VERSION"
-      fi
-      msg "install with opts: $opts"
-      if [[ ! -e $tool ]]; then
-        curl -fsSL https://get.docker.com > $tool
-      fi
-      $SUDO sh $tool $opts
-    fi
-
+    install_docker
     save_package_list "$packages_new"
 
     msg "save the installed packages to $cachedir"
@@ -364,16 +451,21 @@ function ensure_installed() {
 
 function ensure_uninstalled() {
   msg "ensure docker is uninstalled"
+  local installed="$(current_version)"
 
-  if [[ $DIST == "centos" || $DIST == "openeuler" ]]; then
-    $SUDO yum remove docker-ce docker-ce-cli containerd.io
-    $SUDO yum remove docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras || true
-  elif [[ $DIST == "ubuntu" || $DIST == "debian" ]]; then
-    $SUDO apt purge --auto-remove docker-ce docker-ce-cli containerd.io
-    $SUDO apt purge --auto-remove docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras || true
-  else
-    err "\"$DIST\" is not supported!"
-    exit 1
+  if [[ -n $installed ]]; then
+    if [[ $DIST == "centos" || $DIST == "openeuler" ]]; then
+      $SUDO yum remove $PKGS_ESSENTIAL
+      $SUDO yum remove $PKGS_OPTIONAL || true
+    elif [[ $DIST == "ubuntu" || $DIST == "debian" ]]; then
+      $SUDO apt purge --auto-remove $PKGS_ESSENTIAL
+      $SUDO apt purge --auto-remove $PKGS_OPTIONAL || true
+    else
+      err "\"$DIST\" is not supported!"
+      exit 1
+    fi
+    # try to stop docker.socket in bogus state
+    $SUDO systemctl stop docker.socket || true
   fi
 
   msg "try to remove user configurtion"
@@ -385,9 +477,6 @@ function ensure_uninstalled() {
       fi
     fi
   done
-
-  # stop docker.socket in bogus state
-  $SUDO systemctl stop docker.socket
 
   msg "images, containers and volumes arenâ€™t removed, do it by yourself:"
   cat <<EOF
