@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.21
+# version: 23.05.23
 
 set -e
 
@@ -135,15 +135,14 @@ function main() {
 
   if [[ $RESET == "y" ]]; then
     # https://kubevirt.io/user-guide/operations/updating_and_deletion/#deleting-kubevirt
-    msg "delete kubevirt deployment (if any)" && (
-      set +e
-      kubectl delete -n kubevirt kubevirt kubevirt --wait=true
-      kubectl delete apiservices v1.subresources.kubevirt.io
-      kubectl delete mutatingwebhookconfigurations virt-api-mutator
-      kubectl delete validatingwebhookconfigurations virt-operator-validator
-      kubectl delete validatingwebhookconfigurations virt-api-validator
-      kubectl delete -f $manifest_dir/kubevirt-operator.yaml
-    ) || true
+    local kd="kubectl delete --ignore-not-found"
+    msg "delete kubevirt deployment (if any)"
+    $kd -n kubevirt kubevirt kubevirt --wait=true
+    $kd apiservices v1.subresources.kubevirt.io
+    $kd mutatingwebhookconfigurations virt-api-mutator
+    $kd validatingwebhookconfigurations virt-operator-validator
+    $kd validatingwebhookconfigurations virt-api-validator
+    $kd -f $manifest_dir/kubevirt-operator.yaml
   else
     msg "deploy kubevirt"
     for n in $manifest_list; do
