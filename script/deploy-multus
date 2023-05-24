@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.05.24
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+VERSION="4.0.0"       # version to deploy
+DRY_RUN=n             # print information only
+RESET=n               # reset the deployment
+UNINSTALL=n           # reset the deployment and uninstall components
+OFFLINE=${OFFLINE:-n} # no external network
+
+BASEURL="https://github.com/k8snetworkplumbingwg/multus-cni"
+TIMEOUT="300s"
+
+CACHE="cache"
+CACHE_MANIFESTS="$CACHE/manifests"
+CACHE_RUN="$CACHE/run/$SELF"          # runtime generated files
+
+SHIM_BIN="/opt/cni/bin/multus-shim"
+
+function msg() {
+  echo "> $@"
+}
+
+function err() {
+  echo "> $@" >&2
+}
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [-v <ver>] [-R] [-U] [-n] [-h]
+
+  Deploy Multus in Kubernetes cluster the easy way
+
+  -v <ver>:  target version, default: $VERSION
+  -R:        reset the deployment, default: $RESET
+  -U:        reset the deployment and uninstall components, default: $UNINSTALL
+  -n:        print information only, default: $DRY_RUN
+  -h:        print the usage message
+
+Cache:
+
+  To speed up deployment, the required files will be cached at "$CACHE"
+
+Examples:
+
+  1. Deploy Multus
+     $SELF
+
+  2. Reset the deployment
+     $SELF -R
+
+  3. Deploy Multus with specific version
+     $SELF -v 4.0.1
+
+  4. Reset the deployment and uninstall
+     $SELF -U
+
+Version: $SELF_VERSION
+EOF
+
+}
+
+function current_version() {
+  local version=
+  if [[ -x $SHIM_BIN ]]; then
+    version="$($SHIM_BIN -v | sed -n 's/.*version:\(.*\)(.*/\1/p')"
+    version=${version#v}
+  fi
+  echo $version
+}
+
+function main() {
+  # adjust default version if already deployed
+  local installed="$(current_version)"
+  VERSION="${installed:-$VERSION}"
+
+  while getopts ":v:hnRU" opt
+  do
+    case $opt in
+      v ) VERSION=${OPTARG#v};;
+      R ) RESET=y;;
+      U ) RESET=y && UNINSTALL=y;;
+      n ) DRY_RUN=y;;
+      h ) usage && exit;;
+      * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
+    esac
+  done
+  shift $((OPTIND-1))
+
+  for v in CACHE DRY_RUN RESET UNINSTALL VERSION
+  do
+    eval echo "$v: \${$v}"
+  done
+
+  [[ $DRY_RUN == "y" ]] && exit
+
+  validate_sudo
+  check_prerequisites
+  check_network
+  ensure_workdir
+
+  local manifest_list="multus-daemonset-thick.yml"
+  local manifest_dir="$CACHE_MANIFESTS/multus-$VERSION"
+  mkdir -p $manifest_dir
+
+  msg "current version: $installed, target version: $VERSION"
+
+  msg "download manifests"
+  for n in $manifest_list; do
+    local f=$manifest_dir/$n
+    if [[ ! -e "$f" ]]; then
+      msg "download $n -> $f"
+      curl -L $BASEURL/raw/v$VERSION/deployments/$n > $f
+    fi
+  done
+
+  if [[ $RESET == "y" ]]; then
+    local kd="kubectl delete --ignore-not-found"
+    msg "delete multus deployment (if any)"
+    $kd -f $manifest_dir
+  else
+    msg "deploy multus"
+    for n in $manifest_list; do
+      local f="$manifest_dir/$n"
+      local t="$CACHE_RUN/${n%.*}.mod.yml"
+      if [[ $VERSION != "latest" ]]; then
+        sed -e "/image:/s/:snapshot/:v$VERSION/" $f > $t
+      else
+        # keep it as is, which is the latest version
+        cp $f $t
+      fi
+      msg "apply $t"
+      kubectl apply -f $t
+    done
+  fi
+
+  if [[ $RESET != "y" ]]; then
+    msg "wait until ready (timeout: $TIMEOUT)"
+    kubectl -n kube-system rollout status ds/kube-multus-ds --timeout $TIMEOUT
+
+    cat <<EOF
+
+# here are some tips to follow:
+EOF
+  fi
+
+  if [[ $UNINSTALL == "y" ]]; then
+    msg "uninstall $SHIM_BIN"
+    $SUDO rm -f $SHIM_BIN
+  fi
+
+  msg "done"
+}
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+function check_prerequisites() {
+  msg "check prerequisites"
+  if [[ -z $(which curl) ]]; then
+    err "curl is not available"
+    exit 1
+  fi
+  if ! kubectl version >/dev/null 2>&1; then
+    err "can't access k8s cluster"
+    exit 1
+  fi
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! curl -s -m 3 -I example.com >/dev/null; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_MANIFESTS $CACHE_RUN; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+main "$@"
