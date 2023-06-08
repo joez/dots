@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.24
+# version: 23.06.08
 
 set -e
 
@@ -19,6 +19,7 @@ UNINSTALL=n           # reset the deployment and uninstall components
 OFFLINE=${OFFLINE:-n} # no external network
 
 BASEURL="https://github.com/k8snetworkplumbingwg/multus-cni"
+BASEURL_REF="https://github.com/k8snetworkplumbingwg/reference-deployment"
 TIMEOUT="300s"
 
 CACHE="cache"
@@ -110,6 +111,7 @@ function main() {
   ensure_workdir
 
   local manifest_list="multus-daemonset-thick.yml"
+  local manifest_list_dhcp="dhcp-daemonset.yml"
   local manifest_dir="$CACHE_MANIFESTS/multus-$VERSION"
   mkdir -p $manifest_dir
 
@@ -121,6 +123,13 @@ function main() {
     if [[ ! -e "$f" ]]; then
       msg "download $n -> $f"
       curl -L $BASEURL/raw/v$VERSION/deployments/$n > $f
+    fi
+  done
+  for n in $manifest_list_dhcp; do
+    local f=$manifest_dir/$n
+    if [[ ! -e "$f" ]]; then
+      msg "download $n -> $f"
+      curl -L $BASEURL_REF/raw/master/multus-dhcp/$n > $f
     fi
   done
 
@@ -142,15 +151,58 @@ function main() {
       msg "apply $t"
       kubectl apply -f $t
     done
+    for n in $manifest_list_dhcp; do
+      local f=$manifest_dir/$n
+      msg "apply $f"
+      kubectl apply -f $f
+    done
   fi
 
   if [[ $RESET != "y" ]]; then
     msg "wait until ready (timeout: $TIMEOUT)"
     kubectl -n kube-system rollout status ds/kube-multus-ds --timeout $TIMEOUT
 
+    msg "generate example at $CACHE_RUN"
+    local def_nic=$(ip r get 1 | head -n1 | awk '{ print $5 }')
+    local dhcp_net="$CACHE_RUN/macvlan-dhcp-net.yaml"
+    local dhcp_pod="$CACHE_RUN/macvlan-dhcp-pod.yaml"
+    cat <<EOF > $dhcp_net
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  name: macvlan-dhcp
+spec:
+  config: '{
+      "cniVersion": "0.3.1",
+      "type": "macvlan",
+      "master": "$def_nic",
+      "mode": "bridge",
+      "ipam": { "type": "dhcp" }
+    }'
+EOF
+    cat <<EOF > $dhcp_pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: macvlan-dhcp
+  annotations:
+    k8s.v1.cni.cncf.io/networks: macvlan-dhcp
+spec:
+  containers:
+  - name: alpine
+    image: alpine
+    command: ["sleep", "infinity"]
+EOF
+
     cat <<EOF
 
 # here are some tips to follow:
+
+* create a NetworkAttachmentDefinition:
+  kubectl apply -f $dhcp_net
+
+* create a pod with additional NIC
+  kubectl apply -f $dhcp_pod
 EOF
   fi
 
