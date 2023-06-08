@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.23
+# version: 23.06.08
 
 set -e
 
@@ -143,7 +143,7 @@ function main() {
   fi
 
   for v in CACHE DIST DOCKERC_CONFIG DOCKERD_CONFIG DRY_RUN MIRROR OFFLINE PORT_HTTP PORT_HTTPS \
-	   PROXY_HOST PROXY_PORT PROXY_SKIP REPO_MIRROR SERVICE_CONFIG VERSION; do
+           PROXY_HOST PROXY_PORT PROXY_SKIP REPO_MIRROR SERVICE_CONFIG VERSION; do
     eval echo "$v: \${$v}"
   done
 
@@ -287,7 +287,7 @@ function install_via_script() {
   local tool="$CACHE_RUN/get-docker.sh"
   local opts=""
 
-  if [[ $NEED_MIRROR == "yes" ]]; then
+  if [[ $NEED_MIRROR == "y" ]]; then
     opts="--mirror Aliyun"
   fi
   if [[ $VERSION != "latest" ]]; then
@@ -322,7 +322,7 @@ function install_docker() {
   msg "install docker, version:$VERSION"
 
   local base_url="$BASE_URL/linux"
-  if [[ $NEED_MIRROR == "yes" ]]; then
+  if [[ $NEED_MIRROR == "y" ]]; then
     base_url="$BASE_URL_MIRROR/linux"
   fi
 
@@ -348,12 +348,12 @@ function install_docker() {
         msg "available versions:"
         echo "$(echo $allver | fold -s)"
         err "$VERSION not found"
-	exit 1
+        exit 1
       else
-	msg "found $pkgver"
-	pkgver="$(echo $pkgver | cut -d':' -f 2)" # remove epoch
-	# replace space " " with "-$pkgver", the last one will not be replaced
-	pkgs_needed="${pkgs_needed// /-$pkgver }"
+        msg "found $pkgver"
+        pkgver="$(echo $pkgver | cut -d':' -f 2)" # remove epoch
+        # replace space " " with "-$pkgver", the last one will not be replaced
+        pkgs_needed="${pkgs_needed// /-$pkgver }"
       fi
     fi
     msg "install core components"
@@ -390,11 +390,11 @@ EOF
         msg "available versions:"
         echo "$(echo $allver | fold -s)"
         err "$VERSION not found"
-	exit 1
+        exit 1
       else
-	msg "foud $pkgver"
-	# replace space " " with "=$pkgver", the last one will not be replaced
-	pkgs_needed="${pkgs_needed// /=$pkgver }"
+        msg "foud $pkgver"
+        # replace space " " with "=$pkgver", the last one will not be replaced
+        pkgs_needed="${pkgs_needed// /=$pkgver }"
       fi
     fi
     msg "install core components"
