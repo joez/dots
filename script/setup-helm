@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.21
+# version: 23.06.08
 
 set -e
 
@@ -14,10 +14,13 @@ fi
 
 VERSION="3.10.0"      # version to install
 DRY_RUN=n             # print information only
+MIRROR="auto"         # mirror option
+MIRRORS="yes no auto" # valid mirror options
 UNINSTALL=n           # reset the deployment and uninstall components
 OFFLINE=${OFFLINE:-n} # no external network
 
 BASEURL="https://get.helm.sh"
+BASEURL_MIRROR="https://mirrors.huaweicloud.com/helm"
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
 
 CACHE="cache"
@@ -33,10 +36,11 @@ function err() {
 
 function usage() {
   cat <<EOF
-Usage: $SELF [-v <ver>] [-U] [-n] [-h]
+Usage: $SELF [-m <type>] [-v <ver>] [-U] [-n] [-h]
 
   Setup Helm the easy way
 
+  -m <type>: install via mirror [$MIRRORS], default: $MIRROR
   -v <ver>:  target version, default: $VERSION
   -U:        uninstall Helm, default: $UNINSTALL
   -n:        print information only, default: $DRY_RUN
@@ -55,7 +59,7 @@ Examples:
      $SELF -U
 
   3. Install Helm with specific version
-     $SELF -v 3.6.0
+     $SELF -v 3.12.0
 
 Version: $SELF_VERSION
 EOF
@@ -66,9 +70,15 @@ function main() {
   # adjust default version if already deployed
   VERSION="$(current_version)"
 
-  while getopts ":v:hnU" opt
+  while getopts ":m:v:hnU" opt
   do
     case $opt in
+      m ) MIRROR=$OPTARG
+          if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
+            err "invalid mirror option $MIRROR"
+            usage && exit 1
+          fi
+          ;;
       v ) VERSION=${OPTARG#v};;
       U ) UNINSTALL=y;;
       n ) DRY_RUN=y;;
@@ -78,7 +88,7 @@ function main() {
   done
   shift $((OPTIND-1))
 
-  for v in CACHE DRY_RUN UNINSTALL VERSION
+  for v in CACHE DRY_RUN MIRROR UNINSTALL VERSION
   do
     eval echo "$v: \${$v}"
   done
@@ -88,6 +98,7 @@ function main() {
   validate_sudo
   check_prerequisites
   check_network
+  check_mirror
   ensure_workdir
 
   local install_dir="/usr/local/bin"
@@ -102,8 +113,13 @@ function main() {
       msg "WARNING: offline mode, cache must be ready"
       msg "try to install from the cache"
     else
-      msg "download into $package_dir"
-      curl -L $BASEURL/helm-v$VERSION-$VARIANT.tar.gz | tar xz -C $package_dir --strip-components=1
+      local base_url="$BASEURL"
+      local file="helm-v$VERSION-$VARIANT.tar.gz"
+      if [[ $NEED_MIRROR == "y" ]]; then
+        base_url="$BASEURL_MIRROR/v$VERSION"
+      fi
+      msg "download $base_url/$file -> $package_dir"
+      curl -L $base_url/$file | tar xz -C $package_dir --strip-components=1
     fi
   fi
 
@@ -168,6 +184,30 @@ function check_network() {
     fi
   fi
   msg "offline mode: $OFFLINE"
+}
+
+NEED_MIRROR=n
+function check_mirror() {
+  msg "is mirror needed"
+  if [[ $MIRROR == "auto" ]]; then
+    MIRROR=yes # default as needed
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
+    else
+      msg "check whether we can access google cloud"
+      local target="https://cloud.google.com"
+      if curl -s -m 5 $target >/dev/null 2>&1; then
+        msg "curl $target is OK"
+        MIRROR=no
+      else
+        msg "curl $target is FAILED"
+      fi
+    fi
+  fi
+  if [[ $MIRROR == "yes" ]]; then
+    NEED_MIRROR=y
+  fi
+  msg "need mirror: $NEED_MIRROR"
 }
 
 function ensure_workdir() {
