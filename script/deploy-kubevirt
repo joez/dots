@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.23
+# version: 23.06.09
 
 set -e
 
@@ -18,13 +18,17 @@ RESET=n               # reset the deployment
 UNINSTALL=n           # reset the deployment and uninstall components
 OFFLINE=${OFFLINE:-n} # no external network
 
-BASEURL="https://github.com/kubevirt/kubevirt/releases/download"
+BASEURL="https://github.com/kubevirt/kubevirt"
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
 TIMEOUT="300s"
+
+CDI_VERSION="${CDI_VERSION:-1.56.0}"
+CDI_BASEURL="https://github.com/kubevirt/containerized-data-importer"
 
 CACHE="cache"
 CACHE_MANIFESTS="$CACHE/manifests"
 CACHE_PACKAGES="$CACHE/packages/common"
+CACHE_RUN="$CACHE/run/$SELF"
 
 function msg() {
   echo "> $@"
@@ -95,7 +99,7 @@ function main() {
   done
   shift $((OPTIND-1))
 
-  for v in CACHE DRY_RUN RESET UNINSTALL VERSION
+  for v in CACHE CDI_VERSION DRY_RUN RESET UNINSTALL VERSION
   do
     eval echo "$v: \${$v}"
   done
@@ -109,27 +113,50 @@ function main() {
 
   local manifest_list="kubevirt-operator.yaml kubevirt-cr.yaml"
   local manifest_dir="$CACHE_MANIFESTS/kubevirt-$VERSION"
+  local manifest_list_cdi="cdi-operator.yaml cdi-cr.yaml"
+  local manifest_dir_cdi="$CACHE_MANIFESTS/cdi-$CDI_VERSION"
   local package_list="virtctl"
   local package_dir="$CACHE_PACKAGES/kubevirt-$VERSION"
   local install_dir="/usr/local/bin"
 
-  mkdir -p $manifest_dir $package_dir
+  mkdir -p $manifest_dir $manifest_dir_cdi $package_dir
 
   msg "download manifests"
   for n in $manifest_list; do
     local f=$manifest_dir/$n
     if [[ ! -e "$f" ]]; then
       msg "download $n -> $f"
-      curl -L $BASEURL/v$VERSION/$n > $f
+      curl -L $BASEURL/releases/download/v$VERSION/$n > $f
+    fi
+  done
+
+  for n in $manifest_list_cdi; do
+    local f=$manifest_dir_cdi/$n
+    if [[ ! -e "$f" ]]; then
+      msg "download $n -> $f"
+      curl -L $CDI_BASEURL/releases/download/v$CDI_VERSION/$n > $f
     fi
   done
 
   local LABS_BASE="https://kubevirt.io/labs/manifests"
   for n in vm.yaml; do
-    local f=$manifest_dir/$n
+    local f=$CACHE_RUN/$n
     if [[ ! -e "$f" ]]; then
       msg "download $n -> $f"
       curl -L $LABS_BASE/$n > $f
+    fi
+  done
+  local CDI_DEMO_LIST="registry-image-datavolume.yaml import-kubevirt-datavolume.yaml \
+                       import-block-pv.yaml clone-datavolume.yaml vm-dv.yaml"
+  for n in $CDI_DEMO_LIST; do
+    local f=$CACHE_RUN/$n
+    if [[ ! -e "$f" ]]; then
+      msg "download $n -> $f"
+      curl -L $CDI_BASEURL/raw/v$CDI_VERSION/manifests/example/$n > $f
+    fi
+    # use the default storage class
+    if [[ $n == "vm-dv.yaml" ]]; then
+      sed -i '/storageClassName:/d' $f
     fi
   done
 
@@ -137,16 +164,25 @@ function main() {
     # https://kubevirt.io/user-guide/operations/updating_and_deletion/#deleting-kubevirt
     local kd="kubectl delete --ignore-not-found"
     msg "delete kubevirt deployment (if any)"
-    $kd -n kubevirt kubevirt kubevirt --wait=true
+    $kd -n kubevirt kubevirt kubevirt --wait=true || true
     $kd apiservices v1.subresources.kubevirt.io
     $kd mutatingwebhookconfigurations virt-api-mutator
     $kd validatingwebhookconfigurations virt-operator-validator
     $kd validatingwebhookconfigurations virt-api-validator
     $kd -f $manifest_dir/kubevirt-operator.yaml
+    msg "delete cdi deployment (if any)"
+    $kd cdi cdi --wait=true || true
+    $kd -f $manifest_dir_cdi/
   else
     msg "deploy kubevirt"
     for n in $manifest_list; do
       local f=$manifest_dir/$n
+      msg "apply $f"
+      kubectl apply -f $f
+    done
+    msg "deploy cdi"
+    for n in $manifest_list_cdi; do
+      local f=$manifest_dir_cdi/$n
       msg "apply $f"
       kubectl apply -f $f
     done
@@ -157,7 +193,7 @@ function main() {
 
     if [[ ! -e "$f" ]]; then
       msg "download $n -> $f"
-      curl -L $BASEURL/v$VERSION/$n-v$VERSION-$VARIANT > $f
+      curl -L $BASEURL/releases/download/v$VERSION/$n-v$VERSION-$VARIANT > $f
       chmod a+x $f
     fi
 
@@ -177,8 +213,11 @@ function main() {
     cat <<EOF
 
 # here are some tips to follow:
+# configure
+kubectl edit cdi/cdi
 # deploy a sample VM
-kubectl apply -f $manifest_dir/vm.yaml
+# see other samples in $CACHE_RUN
+kubectl apply -f $CACHE_RUN/vm.yaml
 # get the deployed VM
 kubectl get vms
 # start the VM
@@ -230,7 +269,7 @@ function check_network() {
 function ensure_workdir() {
   msg "ensure workdir"
 
-  for d in $CACHE_MANIFESTS $CACHE_PACKAGES; do
+  for d in $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN; do
     if [[ ! -d $d ]]; then
       msg "create dir: $d"
       mkdir -p $d
