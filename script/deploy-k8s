@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.05.22
+# version: 23.06.09
 
 set -e
 
@@ -53,6 +53,9 @@ NO_WORKLOAD=n         # do not schedule workload on control-plane node
 
 FLANNEL_VERSION="${FLANNEL_VERSION:-0.21.5}"                  # flannel version
 FLANNEL_BASEURL="https://raw.githubusercontent.com/flannel-io/flannel"
+
+LOCALPP_VERSION="${LOCALPP_VERSION:-0.0.24}"                  # local path provisioner version
+LOCALPP_BASEURL="https://raw.githubusercontent.com/rancher/local-path-provisioner"
 
 CRI_DOCKERD_VERSION="${CRI_DOCKERD_VERSION:-0.3.2}"           # cri-dockerd version
 CRI_DOCKERD_BASEURL="https://github.com/Mirantis/cri-dockerd" # cri-dockerd repo url
@@ -731,6 +734,14 @@ function init_cluster() {
     curl $FLANNEL_BASEURL/v$FLANNEL_VERSION/Documentation/kube-flannel.yml > $flannel
   fi
 
+  local localpp_dir="$CACHE_MANIFESTS/local-path-provisioner-$LOCALPP_VERSION"
+  mkdir -p $localpp_dir
+  local localpp="$localpp_dir/local-path-storage.yaml"
+  msg "download local-path-provisioner manifest"
+  if [[ ! -e $localpp ]]; then
+    curl $LOCALPP_BASEURL/v$LOCALPP_VERSION/deploy/local-path-storage.yaml > $localpp
+  fi
+
   # different CNI addon requires different pod-network-cider, here is for flannel
   local cidr=$(perl -ne 'print $1 if /"Network":\s*"([^"]+)"/' $flannel)
   local cidr_svc="10.96.0.0/16"
@@ -865,6 +876,11 @@ EOF
     perl -pe "$cmds" $flannel > $flannel_mod
     kubectl apply -f $flannel_mod
   fi
+
+  msg "deploy local-path-provisioner"
+  kubectl apply -f $localpp
+  msg "set local-path as the default StorageClass"
+  kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
 
   msg "generate instructions to join the cluster"
   msg "details in $JOIN_MANUAL"
