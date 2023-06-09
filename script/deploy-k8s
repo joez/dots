@@ -315,7 +315,7 @@ function install_cri_dockerd_if_needed() {
       msg "cri-dockerd already installed, version: $v"
       if [[ $RESET == "y" || $v != $ver ]]; then
         msg "uninstall current version $v first"
-	ensure_cri_dockerd_uninstalled
+        ensure_cri_dockerd_uninstalled
       else
         msg "same as target version $ver, skip"
         return
@@ -334,9 +334,9 @@ function install_cri_dockerd_if_needed() {
         curl -sL ${url}/releases/download/v${ver}/cri-dockerd-${ver}.amd64.tgz | tar xz -C $dir --strip-components=1
       fi
       for f in cri-docker.{service,socket}; do
-	if [[ ! -e $dir/$f ]]; then
+        if [[ ! -e $dir/$f ]]; then
           curl -sL $url/raw/v${ver}/packaging/systemd/$f > $dir/$f
-	fi
+        fi
       done
     fi
 
@@ -896,8 +896,8 @@ EOF
   local algo="sha256"
   local capath="/etc/kubernetes/pki/ca.crt"
   local cahash="$(openssl x509 -pubkey -in $capath \
-	  | openssl rsa -pubin -outform der 2>/dev/null \
-	  | openssl dgst -$algo -hex | sed 's/^.* //')"
+        | openssl rsa -pubin -outform der 2>/dev/null \
+        | openssl dgst -$algo -hex | sed 's/^.* //')"
 
   cat <<EOF | tee $JOIN_MANUAL
 # to join a worker node
