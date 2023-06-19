@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.06.08
+# version: 23.06.14
 
 set -e
 
@@ -22,6 +22,8 @@ OFFLINE=${OFFLINE:-n} # no external network
 BASEURL="https://get.helm.sh"
 BASEURL_MIRROR="https://mirrors.huaweicloud.com/helm"
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
+
+GCLOUD_TEST_URL="https://packages.cloud.google.com"        # google cloud url for test
 
 CACHE="cache"
 CACHE_PACKAGES="$CACHE/packages/common"
@@ -195,7 +197,7 @@ function check_mirror() {
       msg "offline mode, assume mirror is needed"
     else
       msg "check whether we can access google cloud"
-      local target="https://cloud.google.com"
+      local target="$GCLOUD_TEST_URL"
       if curl -s -m 5 $target >/dev/null 2>&1; then
         msg "curl $target is OK"
         MIRROR=no
