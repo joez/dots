@@ -81,59 +81,61 @@ function demo_init {
 function demo_self {
   local self="$(basename ${BASH_SOURCE[0]})"
   cat <<EOF
-# Use $self is very easy!
-# Add following lines to your demo (bash) script:
+# $self enables you to script your demo without typing as you present.
+
+# Using $self is incredibly easy!
+# Add the following lines to your demo (bash) script:
 
 PATH=\$(dirname \$0):\$PATH
 source $(basename ${BASH_SOURCE[0]})
 
-# You can configure it with environment variables, e.g.:
+# You can configure it using environment variables, e.g.:
 
 DEMO_SPEED=$DEMO_SPEED
 DEMO_PS='$DEMO_PS'
 
-# Start the demo mode with command
+# Start the demo mode with the command:
 
 demo_init
 
-# You can show information to users with function: msg
-# And adjust demo options with function: demo_ctl
-# Here are some examples, check details in source code
+# You can display information to users using the 'msg' function
+# and adjust demo options using the 'demo_ctl' function.
+# Here are some examples, check the source code for more details.
 
-msg "show message to the user"  # ENTER to continue
-demo_ctl wait off               # turn off waiting on each command
+msg "Display a message to the user"  # Press ENTER to continue
+demo_ctl wait off                    # Turn off waiting on each command
 
-# Here is the self demo now, ENTER to continue...
+# The self-demo will start now. Press ENTER to continue...
 EOF
   read
 
-  # configure first
+  # configure the demo first
   DEMO_PS="> demo\$ "
   # start the demo
   demo_init
 
-  msg "prompt for users"
-  msg "prompt with variable \$0: $0"
-  msg "prompt with quotation marks: \"'"
-  echo "run echo command"
+  msg "Message to the user, press ENTER to continue"
+  msg "Message with the variable \$0: $0"
+  msg "Message with quotation marks: \"'"
+  echo "Run the 'echo' command"
   pwd
-  
-  msg "turn the demo off with \"demo_ctl off\""
+
+  msg "Turn off the demo mode with 'demo_ctl off'"
   demo_ctl off
-  echo "now you can't see the prompt"
-  msg "it is a secret, you can't see it"
-  echo "the script continues to run, but you can't see the command itself"
+  echo "Now you can't see the message"
+  msg "It's a secret, you can't see it"
+  echo "The script continues to run, but you can't see the command itself"
   pwd
-  
-  echo "enable demo again with \"demo_ctl on\""
+
+  echo "Enable the demo again with 'demo_ctl on'"
   demo_ctl on
-  msg "you can create subshell for interactive operation, run exit to quit"
+  msg "You can create a subshell for interactive operation. Run 'exit' to quit"
   (exec $BASH)
-  msg "you can ssh to the remote server too"
-  msg "disable waiting for input on each command with \"demo_ctl wait off\""
+  msg "You can also SSH to a remote server"
+  msg "Disable waiting for confirmation on each command with 'demo_ctl wait off'"
   demo_ctl wait off
-  msg "no wait for user input"
-  msg "continue to the end"
+  msg "No waiting for user confirmation"
+  msg "Continue to the end"
 }
 
 # if it is not sourced by other script show the self test demo
