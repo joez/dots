@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.06.22
+
+DEMO_SPEED="${DEMO_SPEED:-15}"   # approximate chars per second
+DEMO_PS="${DEMO_PS:-\u@\h:\W$ }" # PS1 for demo
+DEMO_WAIT="on"                   # wait on each command
+
+# show message only
+function msg {
+  :
+}
+
+# simulate user input
+DEMO_INPUT_DELAY="0.1"
+function demo_input {
+  local s="$*"
+  for ((i=0; i<${#s}; i++)); do
+    local c="${s:$i:1}"
+    echo -n "$c"
+    sleep $DEMO_INPUT_DELAY
+    if [[ $c == ' ' || $c == ',' || $c == '.' ]]; then
+      sleep $DEMO_INPUT_DELAY 
+    elif [[ $((RANDOM % 3 )) == 1 ]]; then
+      sleep $DEMO_INPUT_DELAY 
+    fi
+  done
+}
+
+function demo_prompt {
+  local p=$(PS1="$DEMO_PS" $BASH --norc -i </dev/null 2>&1)
+  echo -n "${p%exit}"
+}
+
+# hook every command
+function demo_hook {
+  [[ $DEMO_MODE == 'off' ]] && return
+
+  local cmd=${BASH_COMMAND%% *}
+  if [[ $cmd == demo_* ]]; then
+    return # skip demo_* commands
+  elif [[ $cmd == "msg" ]]; then
+    local arg=$(eval echo "${BASH_COMMAND#* }") # unquote the string
+    demo_prompt && demo_input "# $arg"
+  else
+    demo_prompt && demo_input "$BASH_COMMAND"
+  fi
+  if [[ $DEMO_WAIT == 'on' ]]; then
+    read
+  else
+    echo
+  fi
+}
+
+function demo_ctl {
+  local opt="$1"
+  if [[ $opt == 'init' ]]; then
+    DEMO_MODE='on'
+    DEMO_INPUT_DELAY="$(bc <<< "scale=2; 1/$DEMO_SPEED")"
+    trap demo_hook DEBUG
+  elif [[ $opt == 'on' ]]; then
+    DEMO_MODE='on'
+  elif [[ $opt == 'off' ]]; then
+    DEMO_MODE='off'
+  elif [[ $opt == 'wait' ]]; then
+    if [[ $2 == 'off' ]]; then
+      DEMO_WAIT='off'
+    else
+      DEMO_WAIT='on'
+    fi
+  else
+    echo "no such option: $opt"
+    exit 1
+  fi
+}
+
+function demo_init {
+  demo_ctl init
+}
+
+function demo_self {
+  local self="$(basename ${BASH_SOURCE[0]})"
+  cat <<EOF
+# Use $self is very easy!
+# Add following lines to your demo (bash) script:
+
+PATH=\$(dirname \$0):\$PATH
+source $(basename ${BASH_SOURCE[0]})
+
+# You can configure it with environment variables, e.g.:
+
+DEMO_SPEED=$DEMO_SPEED
+DEMO_PS='$DEMO_PS'
+
+# Start the demo mode with command
+
+demo_init
+
+# You can show information to users with function: msg
+# And adjust demo options with function: demo_ctl
+# Here are some examples, check details in source code
+
+msg "show message to the user"  # ENTER to continue
+demo_ctl wait off               # turn off waiting on each command
+
+# Here is the self demo now, ENTER to continue...
+EOF
+  read
+
+  # configure first
+  DEMO_PS="> demo\$ "
+  # start the demo
+  demo_init
+
+  msg "prompt for users"
+  msg "prompt with variable \$0: $0"
+  msg "prompt with quotation marks: \"'"
+  echo "run echo command"
+  pwd
+  
+  msg "turn the demo off with \"demo_ctl off\""
+  demo_ctl off
+  echo "now you can't see the prompt"
+  msg "it is a secret, you can't see it"
+  echo "the script continues to run, but you can't see the command itself"
+  pwd
+  
+  echo "enable demo again with \"demo_ctl on\""
+  demo_ctl on
+  msg "you can create subshell for interactive operation, run exit to quit"
+  (exec $BASH)
+  msg "you can ssh to the remote server too"
+  msg "disable waiting for input on each command with \"demo_ctl wait off\""
+  demo_ctl wait off
+  msg "no wait for user input"
+  msg "continue to the end"
+}
+
+# if it is not sourced by other script show the self test demo
+if [[ ${BASH_SOURCE[0]} == $0 ]]; then
+  demo_self
+fi
