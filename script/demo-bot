@@ -1,30 +1,46 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.06.22
+# version: 23.06.26
 
-DEMO_SPEED="${DEMO_SPEED:-15}"   # approximate chars per second
+DEMO_SPEED="${DEMO_SPEED:-4}"    # input speed [0 - 9]
 DEMO_PS="${DEMO_PS:-\u@\h:\W$ }" # PS1 for demo
+
 DEMO_WAIT="on"                   # wait on each command
+DEMO_DELAY="on"                  # delay to simulate user input
+DEMO_DELAY_VALUE=( 0.50 0.25 0.12 0.10 0.07 0.05 0.03 0.02 0.01 0.005 )
 
 # show message only
 function msg {
   :
 }
 
+function demo_speed {
+  DEMO_SPEED="${1:-$DEMO_SPEED}"
+
+  local count="${#DEMO_DELAY_VALUE[@]}"
+  if (( $DEMO_SPEED > $count )); then
+    DEMO_SPEED="$(( count - 1 ))"
+  fi
+}
+
 # simulate user input
-DEMO_INPUT_DELAY="0.1"
 function demo_input {
   local s="$*"
-  for ((i=0; i<${#s}; i++)); do
-    local c="${s:$i:1}"
-    echo -n "$c"
-    sleep $DEMO_INPUT_DELAY
-    if [[ $c == ' ' || $c == ',' || $c == '.' ]]; then
-      sleep $DEMO_INPUT_DELAY 
-    elif [[ $((RANDOM % 3 )) == 1 ]]; then
-      sleep $DEMO_INPUT_DELAY 
-    fi
-  done
+  if [[ $DEMO_DELAY == 'on' ]]; then
+    local d="${DEMO_DELAY_VALUE[$DEMO_SPEED]}"
+    for ((i=0; i<${#s}; i++)); do
+      local c="${s:$i:1}"
+      echo -n "$c"
+      sleep $d
+      if [[ $c == ' ' || $c == ',' || $c == '.' ]]; then
+        sleep $d
+      elif [[ $((RANDOM % 5 )) == 1 ]]; then
+        sleep $d
+      fi
+    done
+  else
+    echo -n "$s"
+  fi
 }
 
 function demo_prompt {
@@ -56,7 +72,8 @@ function demo_ctl {
   local opt="$1"
   if [[ $opt == 'init' ]]; then
     DEMO_MODE='on'
-    DEMO_INPUT_DELAY="$(bc <<< "scale=2; 1/$DEMO_SPEED")"
+    DEMO_WAIT='on'
+    demo_speed
     trap demo_hook DEBUG
   elif [[ $opt == 'on' ]]; then
     DEMO_MODE='on'
@@ -68,6 +85,14 @@ function demo_ctl {
     else
       DEMO_WAIT='on'
     fi
+  elif [[ $opt == 'delay' ]]; then
+    if [[ $2 == 'off' ]]; then
+      DEMO_DELAY='off'
+    else
+      DEMO_DELAY='on'
+    fi
+  elif [[ $opt == 'speed' ]]; then
+    demo_speed $2
   else
     echo "no such option: $opt"
     exit 1
@@ -109,26 +134,45 @@ demo_ctl wait off                    # Turn off waiting on each command
 EOF
   read
 
+  local speed="$DEMO_SPEED"
+
   # configure the demo first
   DEMO_PS="> demo\$ "
   # start the demo
   demo_init
 
   msg "Message to the user, press ENTER to continue"
-  msg "Message with the variable \$0: $0"
-  msg "Message with quotation marks: \"'"
+  msg "Message with the variable \$self: $self"
   echo "Run the 'echo' command"
   pwd
 
   msg "Turn off the demo mode with 'demo_ctl off'"
   demo_ctl off
-  echo "Now you can't see the message"
+  echo "The script continues to run, but you can't see the messages and the commands"
   msg "It's a secret, you can't see it"
-  echo "The script continues to run, but you can't see the command itself"
   pwd
-
   echo "Enable the demo again with 'demo_ctl on'"
   demo_ctl on
+
+  msg "Turn off the input delay with 'demo_ctl delay off'"
+  demo_ctl delay off
+  msg "This message is displayed instantly"
+  msg "Enable the input delay again with 'demo_ctl delay on'"
+  demo_ctl delay on
+
+  msg "Adjust the input speed with 'demo_ctl speed LEVEL'"
+  msg "The valid range for LEVEL is [0 - 9]"
+  demo_ctl off
+  for s in 0 3 6 9; do
+    demo_ctl on
+    demo_ctl speed $s
+    msg "speed: $s"
+    demo_ctl off
+  done
+  demo_ctl on
+  msg "back to the default speed: $speed"
+  demo_ctl speed $speed
+
   msg "You can create a subshell for interactive operation. Run 'exit' to quit"
   (exec $BASH)
   msg "You can also SSH to a remote server"
