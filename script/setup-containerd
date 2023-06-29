@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.06.29
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+VERSION="1.7.2"       # version to install
+DRY_RUN=n             # print information only
+MIRROR="auto"         # mirror option
+MIRRORS="yes no auto" # valid mirror options
+UNINSTALL=n           # reset the deployment and uninstall components
+OFFLINE=${OFFLINE:-n} # no external network
+
+ARCH="$(uname -m | sed 's/x86_64/amd64/')"
+VARIANT="$(uname -s | tr A-Z a-z)-$ARCH"
+
+BASEURL="https://github.com/containerd/containerd"
+MIRROR_URL="https://ghps.cc"
+
+RUNC_VERSION="${RUNC_VERSION:-1.1.7}"
+RUNC_BASEURL="https://github.com/opencontainers/runc"
+
+GCLOUD_TEST_URL="https://packages.cloud.google.com"        # google cloud url for test
+
+CACHE="cache"
+CACHE_PACKAGES="$CACHE/packages/common"
+
+function msg() {
+  echo "> $@"
+}
+
+function err() {
+  echo "> $@" >&2
+}
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [-m <type>] [-v <ver>] [-U] [-n] [-h]
+
+  Setup containerd the easy way
+
+  -m <type>: install via mirror [$MIRRORS], default: $MIRROR
+  -v <ver>:  target version, default: $VERSION
+  -U:        uninstall it, default: $UNINSTALL
+  -n:        print information only, default: $DRY_RUN
+  -h:        print the usage message
+
+Cache:
+
+  To speed up deployment, the required files will be cached at "$CACHE"
+
+Examples:
+
+  1. Install containerd
+     $SELF
+
+  2. Uninstall containerd
+     $SELF -U
+
+  3. Install containerd with specific version
+     $SELF -v 1.7.2
+
+Version: $SELF_VERSION
+EOF
+
+}
+
+function main() {
+  # adjust default version if already deployed
+  VERSION="$(current_version)"
+
+  while getopts ":m:v:hnU" opt
+  do
+    case $opt in
+      m ) MIRROR=$OPTARG
+          if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
+            err "invalid mirror option $MIRROR"
+            usage && exit 1
+          fi
+          ;;
+      v ) VERSION=${OPTARG#v};;
+      U ) UNINSTALL=y;;
+      n ) DRY_RUN=y;;
+      h ) usage && exit;;
+      * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
+    esac
+  done
+  shift $((OPTIND-1))
+
+  for v in CACHE DRY_RUN MIRROR RUNC_VERSION UNINSTALL VERSION
+  do
+    eval echo "$v: \${$v}"
+  done
+
+  [[ $DRY_RUN == "y" ]] && exit
+
+  validate_sudo
+  check_prerequisites
+  check_network
+  check_mirror
+  ensure_workdir
+
+  local name_bin="containerd"
+  local name_svc="$name_bin.service"
+  local package_dir="$CACHE_PACKAGES/$name_bin-$VERSION"
+  local package_bin="$package_dir/bin/$name_bin"
+  local package_svc="$package_dir/$name_svc"
+  local install_dir="/usr/local/bin"
+  local install_bin="$install_dir/$name_bin"
+  local install_etc="/etc/$name_bin/config.toml"
+  local install_svc="/lib/systemd/system/$name_svc"
+  local package_dir_runc="$CACHE_PACKAGES/runc-$RUNC_VERSION"
+  local package_bin_runc="$package_dir_runc/runc"
+  local install_dir_runc="/usr/local/bin"
+  local install_bin_runc="$install_dir_runc/runc"
+
+  mkdir -p $package_dir $package_dir_runc
+
+  if [[ $OFFLINE == "y" ]]; then
+    msg "WARNING: offline mode, cache must be ready"
+    msg "try to install from the cache"
+  else
+    local base_url="$BASEURL"
+    local base_url_runc="$RUNC_BASEURL"
+    local file="$name_bin-$VERSION-$VARIANT.tar.gz"
+    local file_runc="runc.$ARCH"
+    if [[ $NEED_MIRROR == "y" ]]; then
+      base_url="$MIRROR_URL/$base_url"
+      base_url_runc="$MIRROR_URL/$base_url_runc"
+    fi
+
+    if [[ ! -e "$package_bin" ]]; then
+      local package_url="$base_url/releases/download/v$VERSION/$file"
+      msg "download $package_url -> $package_dir"
+      curl -L $package_url | tar xz -C $package_dir
+    fi
+    if [[ ! -e "$package_svc" ]]; then
+      local service_url="$base_url/raw/main/$name_svc"
+      msg "download $service_url -> $package_dir"
+      curl -L $service_url > $package_svc
+    fi
+    if [[ ! -e "$package_bin_runc" ]]; then
+      local package_url_runc="$base_url_runc/releases/download/v$RUNC_VERSION/$file_runc"
+      msg "download $package_url_runc -> $package_dir_runc"
+      curl -L $package_url_runc > $package_bin_runc
+    fi
+  fi
+
+  if [[ $UNINSTALL == "y" ]]; then
+    msg "uninstall containerd"
+    $SUDO systemctl stop $name_bin || true
+    $SUDO rm -f $install_svc
+    $SUDO systemctl daemon-reload
+    $SUDO rm -f $install_etc
+    for f in $(dirname $package_bin)/*; do
+      local n="${f##*/}"
+      $SUDO rm -f $install_dir/$n
+    done
+    msg "uninstall runc"
+    $SUDO rm -f $install_bin_runc
+  else
+    msg "install containerd"
+    $SUDO install -t $install_dir $(dirname $package_bin)/*
+    $SUDO cp $package_dir/$name_svc $install_svc
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable --now $name_bin
+    $SUDO mkdir -p $(dirname $install_etc)
+    $name_bin config default | $SUDO tee $install_etc >/dev/null
+    msg "install runc"
+    $SUDO install $package_bin_runc $install_bin_runc
+
+    cat <<EOF
+
+# here are some tips to follow:
+# check the current configuration
+containerd config dump
+# pull container image
+sudo ctr image pull docker.io/library/busybox:latest
+# create and run a container
+sudo ctr run --rm -t docker.io/library/busybox:latest test
+EOF
+  fi
+
+  msg "done"
+}
+
+function current_version() {
+  local version="$VERSION"
+  if [[ -n $(which containerd) ]]; then
+    version="$(containerd -v | cut -d' ' -f3)"
+    version=${version#v}
+  fi
+  echo $version
+}
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+function check_prerequisites() {
+  msg "check prerequisites"
+  if [[ -z $(which curl) ]]; then
+    err "curl is not available"
+    exit 1
+  fi
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! curl -s -m 3 -I example.com >/dev/null; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+NEED_MIRROR=n
+function check_mirror() {
+  msg "is mirror needed"
+  if [[ $MIRROR == "auto" ]]; then
+    MIRROR=yes # default as needed
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
+    else
+      msg "check whether we can access google cloud"
+      local target="$GCLOUD_TEST_URL"
+      if curl -s -m 5 $target >/dev/null 2>&1; then
+        msg "curl $target is OK"
+        MIRROR=no
+      else
+        msg "curl $target is FAILED"
+      fi
+    fi
+  fi
+  if [[ $MIRROR == "yes" ]]; then
+    NEED_MIRROR=y
+  fi
+  msg "need mirror: $NEED_MIRROR"
+}
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_PACKAGES; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+main "$@"
