@@ -12,11 +12,6 @@ if [[ $(id -u) == "0" ]]; then
   SUDO=""
 fi
 
-DOCKER="$SUDO docker"
-if id -nG | grep -qw docker; then
-  DOCKER="docker"
-fi
-
 # IP of the primary interface on the host
 HOST_IP=$(ip route get 1 | head -1 | awk '{print $7}')
 HOST_DNS=$(perl -e 'use Net::Domain hostfqdn; print hostfqdn')
@@ -50,6 +45,10 @@ DRY_RUN=n             # dry run or not
 OFFLINE=${OFFLINE:-n} # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
+CRI_RUNTIME="docker"  # CRI runtime to use
+CRI_RUNTIMES="docker containerd" # valid CRI runtimes
+
+CRI_CLIENT="docker"   # CRI client, such as docker, ctr
 
 FLANNEL_VERSION="${FLANNEL_VERSION:-0.21.5}"                  # flannel version
 FLANNEL_BASEURL="https://raw.githubusercontent.com/flannel-io/flannel"
@@ -60,6 +59,8 @@ LOCALPP_BASEURL="https://raw.githubusercontent.com/rancher/local-path-provisione
 CRI_DOCKERD_VERSION="${CRI_DOCKERD_VERSION:-0.3.2}"           # cri-dockerd version
 CRI_DOCKERD_BASEURL="https://github.com/Mirantis/cri-dockerd" # cri-dockerd repo url
 CRI_DOCKERD_SOCKET="unix:///var/run/cri-dockerd.sock"         # cri-dockerd socket path
+
+CRI_CONTAINERD_SOCKET="unix:///run/containerd/containerd.sock" # containerd socket path
 
 K8S_PKG_BASEURL="https://packages.cloud.google.com"           # base url of k8s packages
 K8S_PKG_MIRROR="https://mirrors.aliyun.com/kubernetes"        # base url of k8s mirror
@@ -80,13 +81,14 @@ function realfile() {
 
 function usage() {
   cat <<EOF
-Usage: $SELF [-a <addr>] [-b <type>] [-e <addr>] [-s <sans>] [-m <type>]
-  [-N <name>] [-v <ver>] [-r] [-R] [-U] [-C] [-W] [-n] [-h]
+Usage: $SELF [-a <addr>] [-b <type>] [-c <cri>] [-e <addr>] [-m <type>]
+  [-N <name>] [-s <sans>] [-v <ver>] [-r] [-R] [-U] [-C] [-W] [-n] [-h]
 
   Deploy Kubernetes and initialize a cluster the easy way
 
   -a <addr>: API server IP address, default: $ADDRESS
   -b <type>: Flannel backend [$BACKENDS], default: $BACKEND
+  -c <cri>:  CRI runtime [$CRI_RUNTIMES], default: $CRI_RUNTIME
   -e <addr>: endpoint for all control-plane nodes, default: "$ENDPOINT"
   -s <sans>: API server certificate SANs separated by ",", default: $SANS
   -m <type>: mirror option [$MIRRORS], default: $MIRROR
@@ -168,13 +170,19 @@ function current_version() {
 # adjust default version if already deployed
 VERSION="$(current_version)"
 
-while getopts ":a:b:e:s:m:N:v:hCWnRrU" opt
+while getopts ":a:b:c:e:s:m:N:v:hCWnRrU" opt
 do
   case $opt in
     a ) ADDRESS=$OPTARG;;
     b ) BACKEND=$OPTARG
         if echo $BACKENDS | grep -v -w $BACKEND >/dev/null 2>&1; then
           echo "invalid backend option $BACKEND"
+          usage && exit 1
+        fi
+        ;;
+    c ) CRI_RUNTIME=$OPTARG
+        if echo $CRI_RUNTIMES | grep -v -w $CRI_RUNTIME >/dev/null 2>&1; then
+          echo "invalid backend option $CRI_RUNTIME"
           usage && exit 1
         fi
         ;;
@@ -200,7 +208,17 @@ do
 done
 shift $((OPTIND-1))
 
-for v in ADDRESS BACKEND DOCKER DRY_RUN ENDPOINT HOST_IP MIRROR NODE \
+if [[ $CRI_RUNTIME == 'docker' ]]; then
+  CRI_CLIENT="docker"
+else
+  CRI_CLIENT="ctr"
+fi
+if [[ -n $SUDO ]]; then
+  CRI_CLIENT="$SUDO $CRI_CLIENT"
+fi
+
+
+for v in ADDRESS BACKEND CRI_RUNTIME CRI_CLIENT DRY_RUN ENDPOINT HOST_IP MIRROR NODE \
          NO_CLUSTER NO_WORKLOAD OFFLINE RESET SANS UNINSTALL VERSION
 do
   eval echo "$v: \${$v}"
@@ -260,8 +278,8 @@ function check_prerequisites() {
     err "openssl is not available"
     exit 1
   fi
-  if [[ -z $(which docker) ]]; then
-    err "docker is not available"
+  if [[ -z $(which $CRI_RUNTIME) ]]; then
+    err "$CRI_RUNTIME is not available"
     exit 1
   fi
 }
@@ -273,9 +291,10 @@ function check_network() {
       msg "can't access external network"
       OFFLINE="y"
     else
-      msg "check docker pull"
-      if ! $DOCKER pull hello-world >/dev/null 2>&1; then
-        err "docker pull can't work, check docker configuration first"
+      msg "check container image downloading"
+      local image="docker.io/library/hello-world:latest"
+      if ! $CRI_CLIENT image pull $image >/dev/null 2>&1; then
+        err "$CRI_CLIENT pull image $image failed, check $CRI_RUNTIME configuration first"
         exit 1
       fi
     fi
@@ -363,9 +382,9 @@ function check_mirror() {
       msg "offline mode, assume mirror is needed"
     else
       msg "check whether we can access google cloud"
-      local target="$K8S_REG_REPO/pause"
-      if $DOCKER pull $target >/dev/null 2>&1; then
-        msg "$DOCKER pull $target is OK"
+      local target="$K8S_REG_REPO/pause:latest"
+      if $CRI_CLIENT image pull $target >/dev/null 2>&1; then
+        msg "$CRI_CLIENT image pull $target is OK"
         target="$K8S_PKG_BASEURL"
         if curl -s -m 5 $target >/dev/null 2>&1; then
           msg "curl $target is OK"
@@ -374,7 +393,7 @@ function check_mirror() {
           msg "curl $target is FAILED"
         fi
       else
-        msg "$DOCKER pull $target is FAILED"
+        msg "$CRI_CLIENT image pull $target is FAILED"
       fi
     fi
   fi
@@ -556,7 +575,9 @@ function ensure_installed() {
     install_k8s
   fi
 
-  install_cri_dockerd_if_needed
+  if [[ $CRI_RUNTIME == 'docker' ]]; then
+    install_cri_dockerd_if_needed
+  fi
 }
 
 function ensure_uninstalled() {
@@ -616,11 +637,13 @@ br_netfilter
 EOF
   fi
   local prefix="/proc/sys/net/bridge/bridge-nf-call-ip"
-  if [[ "$(cat ${prefix}tables)" != "1" || "$(cat ${prefix}6tables)" != "1" ]]; then
+  local forward="/proc/sys/net/ipv4/ip_forward"
+  if [[ "$(cat $forward)" != "1" || "$(cat ${prefix}tables)" != "1" || "$(cat ${prefix}6tables)" != "1" ]]; then
     msg "bridge-nf-call-iptables is disabled, enable it"
     cat <<EOF | $SUDO tee /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-ip6tables = 1
 net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
 EOF
     $SUDO sysctl --system
   fi
@@ -707,6 +730,9 @@ function reset_cluster() {
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
     params="$params --cri-socket $CRI_DOCKERD_SOCKET"
     msg "set cri-socket as $CRI_DOCKERD_SOCKET"
+  elif [[ $CRI_RUNTIME == "containerd" ]]; then
+    params="$params --cri-socket $CRI_CONTAINERD_SOCKET"
+    msg "set cri-socket as $CRI_CONTAINERD_SOCKET"
   fi
   $SUDO kubeadm reset $params
 
@@ -793,10 +819,22 @@ function init_cluster() {
     sock_config="  criSocket: \"$CRI_DOCKERD_SOCKET\""
     params="$params $sock_option"
     msg "set cri-socket as $CRI_DOCKERD_SOCKET"
+  elif [[ $CRI_RUNTIME == "containerd" ]]; then
+    sock_option="--cri-socket $CRI_CONTAINERD_SOCKET"
+    sock_config="  criSocket: \"$CRI_CONTAINERD_SOCKET\""
+    params="$params $sock_option"
+    msg "set cri-socket as $CRI_CONTAINERD_SOCKET"
   fi
 
-  # use the same cgroup driver as the container runtime (Docker)
-  local cgroupdriver="$($DOCKER info -f {{.CgroupDriver}})"
+  # use the same cgroup driver as the container runtime
+  local cgroupdriver="systemd"
+  if [[ $CRI_RUNTIME == 'docker' ]]; then
+    cgroupdriver="$($CRI_CLIENT info -f {{.CgroupDriver}})"
+  else
+    if ! $CRI_RUNTIME config dump | grep -E 'SystemdCgroup\s*=\s*true'; then
+      cgroupdriver="cgroupfs"
+    fi
+  fi
 
   cat <<EOF > $INIT_CONFIG
 apiVersion: kubeadm.k8s.io/v1beta3
