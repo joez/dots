@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.06.30
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+VERSION="3.1.2"       # version to deploy
+DRY_RUN=n             # print information only
+RESET=n               # reset the deployment
+UNINSTALL=n           # reset the deployment and uninstall components
+OFFLINE=${OFFLINE:-n} # no external network
+
+BASEURL="https://github.com/kata-containers/kata-containers"
+TIMEOUT="10m"
+
+CACHE="cache"
+CACHE_MANIFESTS="$CACHE/manifests"
+
+KATA_DIR_BIN="/opt/kata/bin"
+
+function msg() {
+  echo "> $@"
+}
+
+function err() {
+  echo "> $@" >&2
+}
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [-v <ver>] [-R] [-U] [-n] [-h]
+
+  Deploy Kata Containers in Kubernetes cluster the easy way
+
+  -v <ver>:  target version, default: $VERSION
+  -R:        reset the deployment, default: $RESET
+  -U:        reset the deployment and uninstall components, default: $UNINSTALL
+  -n:        print information only, default: $DRY_RUN
+  -h:        print the usage message
+
+Cache:
+
+  To speed up deployment, the required files will be cached at "$CACHE"
+
+Examples:
+
+  1. Deploy Kata Containers
+     $SELF
+
+  2. Reset the deployment
+     $SELF -R
+
+  3. Deploy with specific version
+     $SELF -v 3.1.2
+
+  4. Reset the deployment and uninstall
+     $SELF -U
+
+Version: $SELF_VERSION
+EOF
+
+}
+
+function current_version() {
+  local version="$VERSION"
+  if [[ -n $(which kata-runtime) ]]; then
+    version="$(kata-runtime version | head -n1 | sed -n 's/kata-runtime\s*:\s*//p')"
+    version=${version#v}
+  fi
+  echo $version
+}
+
+function main() {
+  # add bin dir into search path
+  PATH=$KATA_DIR_BIN:$PATH
+
+  # adjust default version if already deployed
+  VERSION="$(current_version)"
+
+  while getopts ":v:hnRU" opt
+  do
+    case $opt in
+      v ) VERSION=${OPTARG#v};;
+      R ) RESET=y;;
+      U ) RESET=y && UNINSTALL=y;;
+      n ) DRY_RUN=y;;
+      h ) usage && exit;;
+      * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
+    esac
+  done
+  shift $((OPTIND-1))
+
+  for v in CACHE DRY_RUN RESET UNINSTALL VERSION
+  do
+    eval echo "$v: \${$v}"
+  done
+
+  [[ $DRY_RUN == "y" ]] && exit
+
+  validate_sudo
+  check_prerequisites
+  check_network
+  ensure_workdir
+
+  local deploy_url="$BASEURL/raw/$VERSION/tools/packaging/kata-deploy"
+  local manifest_dir="$CACHE_MANIFESTS/kata-$VERSION"
+  local manifest_list="
+    kata-rbac/base/kata-rbac.yaml
+    kata-deploy/base/kata-deploy.yaml
+    runtimeclasses/kata-runtimeClasses.yaml
+    kata-cleanup/base/kata-cleanup.yaml
+    examples/test-deploy-kata-qemu.yaml
+    "
+
+  mkdir -p $manifest_dir
+
+  msg "download manifests"
+  for m in $manifest_list; do
+    local n="$(basename $m)"
+    local f="$manifest_dir/$n"
+    if [[ ! -e "$f" ]]; then
+      msg "download $n -> $f"
+      msg " - $deploy_url/$m"
+      curl -L $deploy_url/$m > $f
+    fi
+  done
+
+  if [[ $RESET == "y" ]]; then
+    local kd="kubectl delete --ignore-not-found"
+    msg "delete kata-deploy (if any)"
+    $kd -f $manifest_dir/test-deploy-kata-qemu.yaml
+    $kd -f $manifest_dir/kata-deploy.yaml
+    kubectl -n kube-system wait --timeout $TIMEOUT --for condition=delete -l name=kata-deploy pod || true
+    msg "deploy cleanup task, wait a moment to continue"
+    kubectl apply -f $manifest_dir/kata-cleanup.yaml
+    sleep 5 # cant' find better way, FIXME
+    msg "delete all"
+    for n in kata-cleanup.yaml kata-rbac.yaml kata-runtimeClasses.yaml; do
+      local f=$manifest_dir/$n
+      msg "delete $f"
+      $kd -f $f
+    done
+  else
+    msg "deploy kata-deploy"
+    for n in kata-rbac.yaml kata-deploy.yaml; do
+      local f=$manifest_dir/$n
+      msg "apply $f"
+      kubectl apply -f $f
+    done
+    msg "wait until ready (timeout: $TIMEOUT)"
+    kubectl -n kube-system wait --timeout $TIMEOUT --for condition=Ready -l name=kata-deploy pod
+    msg "deploy kata runtime classes"
+    kubectl apply -f $manifest_dir/kata-runtimeClasses.yaml
+    cat <<EOF
+
+# here are some tips to follow:
+
+* check kata-deploy logs
+  kubectl -n kube-system logs -l name=kata-deploy --tail=-1
+
+* deploy a sample using Kata with QEMU
+  kubectl apply -f $manifest_dir/test-deploy-kata-qemu.yaml
+EOF
+  fi
+
+  msg "done"
+}
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+function check_prerequisites() {
+  msg "check prerequisites"
+  if [[ -z $(which kubelet) ]]; then
+    err "kubelet is not available"
+    exit 1
+  fi
+  if [[ -z $(which curl) ]]; then
+    err "curl is not available"
+    exit 1
+  fi
+  if ! kubectl version >/dev/null 2>&1; then
+    err "can't access k8s cluster"
+    exit 1
+  fi
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! curl -s -m 3 -I example.com >/dev/null; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_MANIFESTS; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+main "$@"
