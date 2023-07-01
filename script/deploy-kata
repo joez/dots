@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.06.30
+# version: 23.07.01
 
 set -e
 
@@ -19,7 +19,7 @@ UNINSTALL=n           # reset the deployment and uninstall components
 OFFLINE=${OFFLINE:-n} # no external network
 
 BASEURL="https://github.com/kata-containers/kata-containers"
-TIMEOUT="10m"
+TIMEOUT="300s"
 
 CACHE="cache"
 CACHE_MANIFESTS="$CACHE/manifests"
@@ -138,10 +138,16 @@ function main() {
     msg "delete kata-deploy (if any)"
     $kd -f $manifest_dir/test-deploy-kata-qemu.yaml
     $kd -f $manifest_dir/kata-deploy.yaml
-    kubectl -n kube-system wait --timeout $TIMEOUT --for condition=delete -l name=kata-deploy pod || true
-    msg "deploy cleanup task, wait a moment to continue"
+    msg "wait until deleted (timeout: $TIMEOUT)"
+    kubectl -n kube-system wait --timeout $TIMEOUT --for=delete -l name=kata-deploy pod
+    msg "deploy cleanup task, wait until done"
     kubectl apply -f $manifest_dir/kata-cleanup.yaml
-    sleep 5 # cant' find better way, FIXME
+    local label='katacontainers\.io/kata-runtime'
+    while [[ -n "$(kubectl get node -o jsonpath="{.items[*].metadata.labels.$label}")" ]]; do
+      sleep 1
+      echo -n '.'
+    done
+    echo
     msg "delete all"
     for n in kata-cleanup.yaml kata-rbac.yaml kata-runtimeClasses.yaml; do
       local f=$manifest_dir/$n
