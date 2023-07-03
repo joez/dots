@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.06.29
+# version: 23.07.01
 
 set -e
 
@@ -117,6 +117,7 @@ function main() {
   local install_bin="$install_dir/$name_bin"
   local install_etc="/etc/$name_bin/config.toml"
   local install_svc="/lib/systemd/system/$name_svc"
+  local install_svc_cfg="/etc/systemd/system/$name_svc.d/http-proxy.conf"
   local package_dir_runc="$CACHE_PACKAGES/runc-$RUNC_VERSION"
   local package_bin_runc="$package_dir_runc/runc"
   local install_dir_runc="/usr/local/bin"
@@ -157,7 +158,7 @@ function main() {
   if [[ $UNINSTALL == "y" ]]; then
     msg "uninstall containerd"
     $SUDO systemctl stop $name_bin || true
-    $SUDO rm -f $install_svc
+    $SUDO rm -f $install_svc $install_svc_cfg
     $SUDO systemctl daemon-reload
     $SUDO rm -f $install_etc
     for f in $(dirname $package_bin)/*; do
@@ -170,6 +171,13 @@ function main() {
     msg "install containerd"
     $SUDO install -t $install_dir $(dirname $package_bin)/*
     $SUDO cp $package_dir/$name_svc $install_svc
+    $SUDO mkdir -p $(dirname $install_svc_cfg)
+    cat <<EOF | $SUDO tee $install_svc_cfg
+[Service]
+Environment="HTTP_PROXY=$http_proxy"
+Environment="HTTPS_PROXY=$https_proxy"
+Environment="NO_PROXY=$no_proxy"
+EOF
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable --now $name_bin
     $SUDO mkdir -p $(dirname $install_etc)
