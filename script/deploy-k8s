@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.06.14
+# version: 23.07.02
 
 set -e
 
@@ -45,8 +45,15 @@ DRY_RUN=n             # dry run or not
 OFFLINE=${OFFLINE:-n} # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
-CRI_RUNTIME="docker"  # CRI runtime to use
-CRI_RUNTIMES="docker containerd" # valid CRI runtimes
+
+CRI_RUNTIMES="docker containerd"            # valid CRI runtimes
+for r in $CRI_RUNTIMES; do
+  if which $r >/dev/null; then
+    DEF_RUNTIME="$r"
+    break
+  fi
+done
+CRI_RUNTIME="${CRI_RUNTIME:-$DEF_RUNTIME}"  # CRI runtime to use
 
 CRI_CLIENT="docker"   # CRI client, such as docker, ctr
 
@@ -216,7 +223,6 @@ fi
 if [[ -n $SUDO ]]; then
   CRI_CLIENT="$SUDO $CRI_CLIENT"
 fi
-
 
 for v in ADDRESS BACKEND CRI_RUNTIME CRI_CLIENT DRY_RUN ENDPOINT HOST_IP MIRROR NODE \
          NO_CLUSTER NO_WORKLOAD OFFLINE RESET SANS UNINSTALL VERSION
@@ -682,13 +688,34 @@ cat <<'EOF' > $CACHE_IMAGE
 
 set -e
 
-DOCKER="sudo docker"
-if [[ "$(id -u)" == "0" ]] || id -nG | grep -qw docker; then
-  DOCKER="docker"
+SUDO=""
+if [[ $(id -u) != "0" ]]; then
+  SUDO="sudo"
+  $SUDO -v # validate first
+fi
+
+DEF_CLIENT="docker"
+if which docker >/dev/null; then
+  DEF_CLIENT="docker"
+elif which ctr >/dev/null; then
+  DEF_CLIENT="ctr"
+fi
+
+OCI_CLIENT="${OCI_CLIENT:-$DEF_CLIENT}"
+
+if [[ $OCI_CLIENT == "docker" ]]; then
+  CMD_LIST="$SUDO docker image list -f 'dangling=false' --format '{{.Repository}}:{{.Tag}}'"
+  CMD_LOAD="$SUDO docker image load"
+  CMD_SAVE="$SUDO docker image save"
+else
+  CMD_LIST="$SUDO ctr -n k8s.io image list -q | grep -v sha256:"
+  CMD_LOAD="$SUDO ctr -n k8s.io image import -"
+  CMD_SAVE="$SUDO ctr -n k8s.io image export -"
 fi
 
 mkdir -p $(dirname $0)/images && cd $_
 
+echo "client: $OCI_CLIENT"
 if [[ $1 == "load" ]]; then
   echo "load images:"
   images="$(find . -type f -name '*tar.gz')"
@@ -696,12 +723,12 @@ if [[ $1 == "load" ]]; then
     file="${i#./}"
     echo "loading $file"
     if [[ $DRY_RUN != 'y' ]]; then
-      $DOCKER load -i $file
+      zcat $file | $CMD_LOAD
     fi
   done
 else
   echo "save images:"
-  images="$($DOCKER images -f 'dangling=false' --format '{{.Repository}}:{{.Tag}}')"
+  images="$(eval $CMD_LIST)"
   for i in $images; do
     if [[ -n "$RE_WANTED" && ! $i =~ $RE_WANTED ]]; then
       echo "not wanted $i" && continue
@@ -713,7 +740,7 @@ else
     echo "saving $i"
     echo "    -> $file"
     if [[ $DRY_RUN != 'y' ]]; then
-      mkdir -p $(dirname $i) && $DOCKER save $i | gzip > $file;
+      mkdir -p $(dirname $i) && $CMD_SAVE $i | gzip > $file;
     fi
   done
 fi
@@ -879,7 +906,7 @@ EOF
 
   if [[ $OFFLINE == "y" && -f $CACHE_IMAGE ]]; then
     msg "try to load cached container images"
-    $CACHE_IMAGE load
+    OCI_CLIENT="${CRI_CLIENT##* }" $CACHE_IMAGE load
   fi
 
   msg "init k8s control-plane node, ver:$VERSION, api:$ADDRESS"
