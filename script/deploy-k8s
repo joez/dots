@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.07.02
+# version: 23.08.04
 
 set -e
 
@@ -117,7 +117,7 @@ Offline mode:
 
   You can save all the downloaded container images by this command:
 
-    $CACHE_IMAGE
+    $CACHE_IMAGE save
 
   These cached files will be loaded in offline mode when necessary.
 
@@ -681,17 +681,19 @@ function ensure_workdir() {
 
   if [[ ! -f $CACHE_IMAGE ]]; then
     msg "create script: $CACHE_IMAGE"
-cat <<'EOF' > $CACHE_IMAGE
+cat <<'EOFOF' > $CACHE_IMAGE
 #!/usr/bin/env bash
-# AUTO-GENERATED
-# load or save images
+# author: joe.zheng
+# version: 23.08.04
 
 set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 
 SUDO=""
 if [[ $(id -u) != "0" ]]; then
   SUDO="sudo"
-  $SUDO -v # validate first
 fi
 
 DEF_CLIENT="docker"
@@ -702,8 +704,52 @@ elif which ctr >/dev/null; then
 fi
 
 OCI_CLIENT="${OCI_CLIENT:-$DEF_CLIENT}"
+DIR_IMAGES="${DIR_IMAGES:-$(dirname $0)/images}"
 
-if [[ $OCI_CLIENT == "docker" ]]; then
+function usage() {
+  cat <<EOF
+Usage: $SELF {save | load}
+  save or load container images
+
+Environment variables:
+  OCI_CLIENT:  OCI client to use [docker, ctr], default: $OCI_CLIENT
+  DIR_IMAGES:  dir to save images or load from, default: $DIR_IMAGES
+  IMAGE_LIST:  file containing the list of images to process
+  RE_WANTED:   regex to get wanted images
+  RE_IGNORE:   regex to ignore unwanted images
+  DRY_RUN:     print out information only if it is "y"
+
+Version: $SELF_VERSION
+EOF
+}
+
+function msg {
+  echo "> $@"
+}
+
+function read_image_list {
+  if [[ -e "$1" ]]; then
+    awk '!/^#/ { print $1 }' $1
+  fi
+}
+
+if [[ -z "$1" || "$1" == "-h" ]]; then
+  usage && exit
+else
+  cmd="$1"
+  shift
+  if ! [[ "$cmd" == "save" || "$cmd" == "load" ]]; then
+    msg "not supported cmd: $cmd"
+    usage && exit 1
+  fi
+fi
+
+for v in DRY_RUN DIR_IMAGES IMAGE_LIST OCI_CLIENT RE_IGNORE RE_WANTED
+do
+  eval echo "$v: \${$v}"
+done
+
+if [[ "$OCI_CLIENT" == "docker" ]]; then
   CMD_LIST="$SUDO docker image list -f 'dangling=false' --format '{{.Repository}}:{{.Tag}}'"
   CMD_LOAD="$SUDO docker image load"
   CMD_SAVE="$SUDO docker image save"
@@ -713,39 +759,51 @@ else
   CMD_SAVE="$SUDO ctr -n k8s.io image export -"
 fi
 
-mkdir -p $(dirname $0)/images && cd $_
+if [[ -n "$SUDO" ]]; then
+  $SUDO -v # validate first
+fi
 
-echo "client: $OCI_CLIENT"
-if [[ $1 == "load" ]]; then
-  echo "load images:"
-  images="$(find . -type f -name '*tar.gz')"
-  for i in $images; do
-    file="${i#./}"
-    echo "loading $file"
-    if [[ $DRY_RUN != 'y' ]]; then
-      zcat $file | $CMD_LOAD
-    fi
-  done
+msg "$cmd images"
+mkdir -p $DIR_IMAGES # all the files are stored in this dir
+
+if [[ -n "$IMAGE_LIST" ]]; then
+  images="$(read_image_list $IMAGE_LIST)"
 else
-  echo "save images:"
-  images="$(eval $CMD_LIST)"
-  for i in $images; do
-    if [[ -n "$RE_WANTED" && ! $i =~ $RE_WANTED ]]; then
-      echo "not wanted $i" && continue
-    fi
-    if [[ -n "$RE_IGNORE" && $i =~ $RE_IGNORE ]]; then
-      echo "ignore $i" && continue
-    fi
+  if [[ "$cmd" == "save" ]]; then
+    images="$(eval $CMD_LIST)"
+  else
+    images="$(cd $DIR_IMAGES && find . -type f -name '*tar.gz')"
+  fi
+fi
+
+msg "enter directory: $DIR_IMAGES"
+cd $DIR_IMAGES
+
+for i in $images; do
+  msg "processing $i"
+  if [[ -n "$RE_WANTED" && ! $i =~ $RE_WANTED ]]; then
+    msg "not wanted $i" && continue
+  fi
+  if [[ -n "$RE_IGNORE" && $i =~ $RE_IGNORE ]]; then
+    msg "ignore $i" && continue
+  fi
+  if [[ "$cmd" == "save" ]]; then
     file="${i//:/-}.tar.gz"
-    echo "saving $i"
-    echo "    -> $file"
-    if [[ $DRY_RUN != 'y' ]]; then
+    msg "saving $file"
+    if [[ "$DRY_RUN" != 'y' ]]; then
       mkdir -p $(dirname $i) && $CMD_SAVE $i | gzip > $file;
     fi
-  done
-fi
-echo "done"
-EOF
+  else
+    file="${i#./}"
+    msg "loading $file"
+    if [[ "$DRY_RUN" != 'y' ]]; then
+      zcat $file | $CMD_LOAD
+    fi
+  fi
+done
+
+msg "done"
+EOFOF
 
     chmod a+x $CACHE_IMAGE
   fi
