@@ -684,7 +684,7 @@ function ensure_workdir() {
 cat <<'EOFOF' > $CACHE_IMAGE
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.08.04
+# version: 23.08.05
 
 set -e
 
@@ -705,6 +705,7 @@ fi
 
 OCI_CLIENT="${OCI_CLIENT:-$DEF_CLIENT}"
 DIR_IMAGES="${DIR_IMAGES:-$(dirname $0)/images}"
+NO_CLOBBER="${NO_CLOBBER:-n}"
 
 function usage() {
   cat <<EOF
@@ -712,12 +713,13 @@ Usage: $SELF {save | load}
   save or load container images
 
 Environment variables:
-  OCI_CLIENT:  OCI client to use [docker, ctr], default: $OCI_CLIENT
-  DIR_IMAGES:  dir to save images or load from, default: $DIR_IMAGES
-  IMAGE_LIST:  file containing the list of images to process
-  RE_WANTED:   regex to get wanted images
-  RE_IGNORE:   regex to ignore unwanted images
   DRY_RUN:     print out information only if it is "y"
+  DIR_IMAGES:  dir to save images or load from, default: $DIR_IMAGES
+  NO_CLOBBER:  do not overwrite existing files, default: $NO_CLOBBER
+  OCI_CLIENT:  OCI client to use [docker, ctr], default: $OCI_CLIENT
+  IMAGE_LIST:  file containing the list of images to process
+  RE_IGNORE:   regex to ignore unwanted images
+  RE_WANTED:   regex to get wanted images
 
 Version: $SELF_VERSION
 EOF
@@ -744,7 +746,7 @@ else
   fi
 fi
 
-for v in DRY_RUN DIR_IMAGES IMAGE_LIST OCI_CLIENT RE_IGNORE RE_WANTED
+for v in DRY_RUN DIR_IMAGES IMAGE_LIST NO_CLOBBER OCI_CLIENT RE_IGNORE RE_WANTED
 do
   eval echo "$v: \${$v}"
 done
@@ -790,6 +792,12 @@ for i in $images; do
   if [[ "$cmd" == "save" ]]; then
     file="${i//:/-}.tar.gz"
     msg "saving $file"
+    if [[ "$NO_CLOBBER" == 'y' ]]; then
+      if [[ -e "$file" ]]; then
+        msg "file exists, skip"
+	continue
+      fi
+    fi
     if [[ "$DRY_RUN" != 'y' ]]; then
       mkdir -p $(dirname $i) && $CMD_SAVE $i | gzip > $file;
     fi
