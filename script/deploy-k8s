@@ -717,7 +717,7 @@ Environment variables:
   DIR_IMAGES:  dir to save images or load from, default: $DIR_IMAGES
   NO_CLOBBER:  do not overwrite existing files, default: $NO_CLOBBER
   OCI_CLIENT:  OCI client to use [docker, ctr], default: $OCI_CLIENT
-  IMAGE_LIST:  file containing the list of images to process
+  IMAGE_LIST:  file containing the list of image names (repo:tag)
   RE_IGNORE:   regex to ignore unwanted images
   RE_WANTED:   regex to get wanted images
 
@@ -802,7 +802,10 @@ for i in $images; do
       mkdir -p $(dirname $i) && $CMD_SAVE $i | gzip > $file;
     fi
   else
-    file="${i#./}"
+    file="${i#./}" # assume it is a file name first
+    if [[ "$file" != *.tar.gz && ! -e "$file" ]]; then
+      file="${file//:/-}.tar.gz" # image name to file name
+    fi
     msg "loading $file"
     if [[ "$DRY_RUN" != 'y' ]]; then
       zcat $file | $CMD_LOAD
