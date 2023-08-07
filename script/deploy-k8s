@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.08.04
+# version: 23.08.08
 
 set -e
 
@@ -21,6 +21,8 @@ K8S_NOPROXY=".svc,.svc.cluster.local"
 K8S_PKGS="kubelet kubeadm kubectl"
 INIT_CONFIG="kubeadm-init.yaml"       # config file for "kubeadm init"
 JOIN_MANUAL="kubeadm-join.txt"        # "kubeadm join" instructions
+
+INIT_WORKDIR="${INIT_WORKDIR:-n}"     # initialize workdir and quit if "y"
 
 CACHE="cache"                         # the cache directory
 CACHE_IMAGE="$CACHE/image"            # script to save or load images
@@ -112,7 +114,7 @@ Usage: $SELF [-a <addr>] [-b <type>] [-c <cri>] [-e <addr>] [-m <type>]
 Offline mode:
 
   To support deployment in offline mode, the required packages and containers
-  will be cached in the folder "$CACHE/" when deploying it on a machine with
+  will be cached in the workdir "$CACHE/" when deploying it on a machine with
   internet connection, then copy the cache to the target machine and deploy it
 
   You can save all the downloaded container images by this command:
@@ -121,7 +123,7 @@ Offline mode:
 
   These cached files will be loaded in offline mode when necessary.
 
-  The directory structure:
+  The workdir structure:
 
   - $CACHE
     |- images    (exported container images)
@@ -159,6 +161,9 @@ Examples:
 
   6. Reset the cluster and uninstall components
      $SELF -U
+
+  7. Initialize workdir ($CACHE) and quit
+     INIT_WORKDIR=y $SELF
 
 Version: $SELF_VERSION
 EOF
@@ -234,6 +239,9 @@ done
 
 function main() {
   warn_as_root
+  if [[ $INIT_WORKDIR == "y" ]]; then
+    ensure_workdir && exit
+  fi
   validate_sudo
   check_prerequisites
   check_network
@@ -657,8 +665,9 @@ EOF
 
 function warn_as_root() {
   if [[ $(id -u) == "0" ]]; then
-    msg "you are running as root user, kubectl will be configured to root only!"
-    sleep 3
+    msg "you are running as root user, are you sure?"
+    msg "continue in 5 seconds, CTRL + C to interrupt"
+    read -t 5 || true
   fi
 }
 
