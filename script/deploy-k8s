@@ -693,7 +693,7 @@ function ensure_workdir() {
 cat <<'EOFOF' > $CACHE_IMAGE
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.08.05
+# version: 23.08.08
 
 set -e
 
@@ -718,8 +718,13 @@ NO_CLOBBER="${NO_CLOBBER:-n}"
 
 function usage() {
   cat <<EOF
-Usage: $SELF {save | load}
-  save or load container images
+Usage: $SELF {save | load} [<name>...]
+  Save or load container images
+
+  <name>: image name in the format repo:tag, e.g. nginx:latest
+
+  If no image name is provided, all available container images will be used,
+  if both image names and IMAGE_LIST are provided, they will be merged.
 
 Environment variables:
   DRY_RUN:     print out information only if it is "y"
@@ -780,17 +785,19 @@ mkdir -p $DIR_IMAGES # all the files are stored in this dir
 if [[ -n "$IMAGE_LIST" ]]; then
   images="$(read_image_list $IMAGE_LIST)"
 else
-  if [[ "$cmd" == "save" ]]; then
-    images="$(eval $CMD_LIST)"
-  else
-    images="$(cd $DIR_IMAGES && find . -type f -name '*tar.gz')"
+  if (( $# < 1 )); then
+    if [[ "$cmd" == "save" ]]; then
+      images="$(eval $CMD_LIST)"
+    else
+      images="$(cd $DIR_IMAGES && find . -type f -name '*tar.gz')"
+    fi
   fi
 fi
 
 msg "enter directory: $DIR_IMAGES"
 cd $DIR_IMAGES
 
-for i in $images; do
+for i in $images $@; do
   msg "processing $i"
   if [[ -n "$RE_WANTED" && ! $i =~ $RE_WANTED ]]; then
     msg "not wanted $i" && continue
