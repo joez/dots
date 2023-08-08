@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.08.08
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+SUDO=""
+if [[ $(id -u) != "0" ]]; then
+  SUDO="sudo"
+fi
+
+DIR_CHARTS="${DIR_CHARTS:-$(dirname $0)/charts}"
+NO_CLOBBER="${NO_CLOBBER:-n}"
+
+USE_MIRROR="${USE_MIRROR:-n}"
+MIRROR_URL="${MIRROR_URL:-https://ghps.cc}"
+
+SVC_NAME="chart" # container name
+SVC_PORT="9080"  # port number
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [command] [args]
+  Mirror and serve Helm charts
+
+Commands:
+  list <repo>      list all the charts in the repository
+  pull [<url>...]  pull the charts, read from stdin if no url
+  serve            serve the local Helm charts
+
+Environment variables:
+  DRY_RUN:     print out information only if it is "y"
+  DIR_CHARTS:  dir to save charts or load from, default: $DIR_CHARTS
+  NO_CLOBBER:  do not overwrite existing files, default: $NO_CLOBBER
+  USE_MIRROR:  use mirror to pull chart or not, default: $USE_MIRROR
+  MIRROR_URL:  mirror to speedup chart pulling, default: $MIRROR_URL
+  SVC_NAME:    container name to use: default: $SVC_NAME
+  SVC_PORT:    port number to listen: default: $SVC_PORT
+
+Version: $SELF_VERSION
+EOF
+}
+
+function msg {
+  echo "> $@"
+}
+
+function err {
+  echo "> $@" >&2
+}
+
+function list_chart_url {
+  curl -sL "$1/index.yaml" \
+  | perl -ne 'if (/^(\s+)urls:/../$1\s*-\s+/) { s/^\s+(?:urls:|-)\s*//; print if $_ }' \
+  | sort
+}
+
+function pull_chart {
+  url="$1"
+  if [[ "$USE_MIRROR" == 'y' ]]; then
+    url="$MIRROR_URL/$url"
+  fi
+  msg "pulling $url"
+  file="${url##*/}"
+  msg "saving $file"
+
+  if [[ "$NO_CLOBBER" == 'y' ]]; then
+    if [[ -e "$file" ]]; then
+      msg "file exists, skip"
+      return
+    fi
+  fi
+  if [[ "$DRY_RUN" != 'y' ]]; then
+    wget -q -c $url
+  fi
+}
+
+if [[ -z "$1" || "$1" == "-h" ]]; then
+  usage && exit
+else
+  cmd="$1"
+  shift
+fi
+
+mkdir -p $DIR_CHARTS
+
+if [[ "$cmd" == "list" ]]; then
+  if [[ -z "$1" ]]; then
+    err "no repository is provided"
+    exit 1
+  fi
+  list_chart_url "$1" && exit
+elif [[ "$cmd" == "pull" ]]; then
+  if [[ -t 0 ]]; then
+    # pass args into stdin
+    exec < <(printf '%s\n' "$@")
+  fi
+  while IFS= read -r url; do
+    if [[ "$url" != *.tgz ]]; then
+      msg "ingore $url" && continue
+    fi
+    msg "processing $url"
+    (cd $DIR_CHARTS && pull_chart "$url")
+  done
+elif [[ "$cmd" == "serve" ]]; then
+  if $SUDO docker container inspect -f '{{.ID}}' $SVC_NAME >/dev/null; then
+    msg "stop and delete the old container: $SVC_NAME"
+    $SUDO docker rm -f $SVC_NAME
+  fi
+  msg "create container $SVC_NAME"
+  $SUDO docker create --name $SVC_NAME \
+    -v $(cd $DIR_CHARTS && pwd):/charts \
+    -p $SVC_PORT:8080 --restart unless-stopped \
+    -e STORAGE=local -e STORAGE_LOCAL_ROOTDIR=/charts \
+    chartmuseum/chartmuseum:edge
+  msg "start container $SVC_NAME"
+  $SUDO docker start $SVC_NAME
+  cat <<EOF
+# now you can try to list all the charts in local repo by cmd:
+  $SELF list http://localhost:$SVC_PORT
+EOF
+else
+  err "not supported cmd: $cmd"
+  exit 1
+fi
+
+msg "done"
