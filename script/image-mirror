@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 22.12.23
+
+set -e
+
+SELF="$(basename $0)"
+MIRROR="${MIRROR:-registry.cn-shanghai.aliyuncs.com/joez}"
+DOCKER="sudo docker"
+if [[ "$(id -u)" == "0" ]] || id -nG | grep -qw docker; then
+  DOCKER="docker"
+fi
+
+function usage() {
+  cat <<EOF
+Usage: $SELF {pull | push} NAME[:TAG]...
+  pull/push images from/to mirror
+EOF
+}
+
+function msg {
+  echo "> $@"
+}
+
+if [[ -z "$1" ]]; then
+  usage && exit
+else
+  cmd="$1"
+  shift
+fi
+
+if [[ $cmd == "pull" || $cmd == "push" ]]; then
+  msg "$cmd images:"
+  for i in "$@"; do
+    IFS=: read repo tag <<< "$i"
+    name="${repo##*/}"
+    tag="${tag:-latest}"
+    target="$MIRROR/$name:$tag"
+
+    if [[ $cmd == "pull" ]]; then
+      msg "pull $i from $target"
+      $DOCKER pull $target
+      msg "tag $target as $repo:$tag"
+      $DOCKER tag $target $repo:$tag
+    else
+      msg "tag $repo:$tag as $target"
+      $DOCKER tag $repo:$tag $target
+      msg "push $target"
+      $DOCKER push $target
+    fi
+  done
+else
+  msg "not supported cmd: $cmd"
+  usage && exit 1
+fi
