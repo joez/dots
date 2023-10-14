@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.10.14
+
+# load or save images
+# this is a simplified version, get the fully functional one with command:
+#   INIT_WORKDIR=y ./deploy-k8s
+# find the generated script named cache/image
+
+set -e
+
+DOCKER="sudo docker"
+if [[ "$(id -u)" == "0" ]] || id -nG | grep -qw docker; then
+  DOCKER="docker"
+fi
+
+mkdir -p $(dirname $0)/images && cd $_
+
+if [[ $1 == "load" ]]; then
+  echo "load images:"
+  images="$(find . -type f -name '*tar.gz')"
+  for i in $images; do
+    file="${i#./}"
+    echo "loading $file"
+    if [[ $DRY_RUN != 'y' ]]; then
+      $DOCKER load -i $file
+    fi
+  done
+else
+  echo "save images:"
+  images="$($DOCKER images -f 'dangling=false' --format '{{.Repository}}:{{.Tag}}')"
+  for i in $images; do
+    if [[ -n "$RE_WANTED" && ! $i =~ $RE_WANTED ]]; then
+      echo "not wanted $i" && continue
+    fi
+    if [[ -n "$RE_IGNORE" && $i =~ $RE_IGNORE ]]; then
+      echo "ignore $i" && continue
+    fi
+    file="${i//:/-}.tar.gz"
+    echo "saving $i"
+    echo "    -> $file"
+    if [[ $DRY_RUN != 'y' ]]; then
+      mkdir -p $(dirname $i) && $DOCKER save $i | gzip > $file;
+    fi
+  done
+fi
+echo "done"
