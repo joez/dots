@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.08.08
+# version: 23.10.14
 
 set -e
 
@@ -693,7 +693,7 @@ function ensure_workdir() {
 cat <<'EOFOF' > $CACHE_IMAGE
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.08.08
+# version: 23.10.14
 
 set -e
 
@@ -715,6 +715,9 @@ fi
 OCI_CLIENT="${OCI_CLIENT:-$DEF_CLIENT}"
 DIR_IMAGES="${DIR_IMAGES:-$(dirname $0)/images}"
 NO_CLOBBER="${NO_CLOBBER:-n}"
+AUTO_PULL="${AUTO_PULL:-y}"
+
+NAMESPACE="k8s.io"
 
 function usage() {
   cat <<EOF
@@ -732,6 +735,7 @@ Environment variables:
   NO_CLOBBER:  do not overwrite existing files, default: $NO_CLOBBER
   OCI_CLIENT:  OCI client to use [docker, ctr], default: $OCI_CLIENT
   IMAGE_LIST:  file containing the list of image names (repo:tag)
+  AUTO_PULL:   pull the image automatically if it doesn't exist, default: $AUTO_PULL
   RE_IGNORE:   regex to ignore unwanted images
   RE_WANTED:   regex to get wanted images
 
@@ -746,6 +750,27 @@ function msg {
 function read_image_list {
   if [[ -e "$1" ]]; then
     awk '!/^#/ { print $1 }' $1
+  fi
+}
+
+function ensure_image {
+  local name="$1"
+  msg "ensure image exists: $name"
+  local todo
+  if [[ "$OCI_CLIENT" == "docker" ]]; then
+    if [[ -z "$($SUDO docker image ls -q $name)" ]]; then
+      todo="$SUDO docker image pull $name"
+    fi
+  else
+    if [[ -z "$($SUDO ctr -n $NAMESPACE image ls -q name==$name)" ]]; then
+      todo="$SUDO ctr -n $NAMESPACE image pull $name"
+    fi
+  fi
+  if [[ -n "$todo" ]]; then
+    msg "pulling $name"
+    if [[ "$DRY_RUN" != 'y' ]]; then
+      eval $todo
+    fi
   fi
 }
 
@@ -770,9 +795,9 @@ if [[ "$OCI_CLIENT" == "docker" ]]; then
   CMD_LOAD="$SUDO docker image load"
   CMD_SAVE="$SUDO docker image save"
 else
-  CMD_LIST="$SUDO ctr -n k8s.io image list -q | grep -v sha256:"
-  CMD_LOAD="$SUDO ctr -n k8s.io image import -"
-  CMD_SAVE="$SUDO ctr -n k8s.io image export -"
+  CMD_LIST="$SUDO ctr -n $NAMESPACE image list -q | grep -v sha256:"
+  CMD_LOAD="$SUDO ctr -n $NAMESPACE image import -"
+  CMD_SAVE="$SUDO ctr -n $NAMESPACE image export -"
 fi
 
 if [[ -n "$SUDO" ]]; then
@@ -806,12 +831,15 @@ for i in $images $@; do
     msg "ignore $i" && continue
   fi
   if [[ "$cmd" == "save" ]]; then
+    if [[ "$AUTO_PULL" == 'y' ]]; then
+      ensure_image $i
+    fi
     file="${i//:/-}.tar.gz"
     msg "saving $file"
     if [[ "$NO_CLOBBER" == 'y' ]]; then
       if [[ -e "$file" ]]; then
         msg "file exists, skip"
-	continue
+        continue
       fi
     fi
     if [[ "$DRY_RUN" != 'y' ]]; then
