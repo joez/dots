@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.08.08
+# version: 23.11.11
 
 set -e
 
@@ -18,8 +18,8 @@ NO_CLOBBER="${NO_CLOBBER:-n}"
 USE_MIRROR="${USE_MIRROR:-n}"
 MIRROR_URL="${MIRROR_URL:-https://ghps.cc}"
 
-SVC_NAME="chart" # container name
-SVC_PORT="9080"  # port number
+SVC_NAME="${SVC_NAME:-$SELF}" # container name
+SVC_PORT="${SVC_PORT:-9080}"  # port number
 
 function usage() {
   cat <<EOF
@@ -39,6 +39,20 @@ Environment variables:
   MIRROR_URL:  mirror to speedup chart pulling, default: $MIRROR_URL
   SVC_NAME:    container name to use: default: $SVC_NAME
   SVC_PORT:    port number to listen: default: $SVC_PORT
+
+Examples:
+
+  1. List and pull Helm charts
+    $SELF list https://helm.releases.hashicorp.com | $SELF pull
+
+  2. Start web server to serve local repo
+    $SELF serve
+
+  3. Use the local repo
+    $SELF list http://localhost:$SVC_PORT
+    helm repo add local http://localhost:$SVC_PORT
+    helm repo update
+    helm search repo local
 
 Version: $SELF_VERSION
 EOF
