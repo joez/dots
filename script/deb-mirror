@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.11.11
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+SUDO=""
+if [[ $(id -u) != "0" ]]; then
+  SUDO="sudo"
+fi
+
+DIR_DEBS="${DIR_DEBS:-$(dirname $0)/debs}"
+DIR_EMPTY="$DIR_DEBS/empty"
+DIR_FILE="$DIR_DEBS/file"
+SVC_CONF="$DIR_DEBS/file.conf"
+
+NO_CLOBBER="${NO_CLOBBER:-n}"
+
+SVC_NAME="${SVC_NAME:-debs}" # container name
+SVC_PORT="${SVC_PORT:-9090}" # port number
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [command] [args]
+  Mirror and serve Debian packages as a local repo
+
+  You should "sudo apt-get update" first to list deb urls, installed
+  packages will not be listed.
+
+Commands:
+  list <pkg>...    list all the deb urls for the target packages
+  pull [<url>...]  pull the deb packages, read from stdin if no url
+  serve            serve the local deb repo
+
+Environment variables:
+  DRY_RUN:     print out information only if it is "y"
+  DIR_DEBS:    dir to save deb packages, default: $DIR_DEBS
+  NO_CLOBBER:  do not overwrite existing files, default: $NO_CLOBBER
+  SVC_NAME:    container name to use: default: $SVC_NAME
+  SVC_PORT:    port number to listen: default: $SVC_PORT
+
+Examples:
+
+  1. List and pull deb packages
+    sudo apt update && $SELF list iftop ifstat | $SELF pull
+
+  2. Start web server to serve local repo
+    $SELF serve
+
+  3. Configure apt to use the local repo
+    cat <<EOC | sudo tee /etc/apt/sources.list.d/local.list
+deb [trusted=yes] http://localhost:$SVC_PORT /
+EOC
+    sudo apt update && apt-cache policy iftop
+
+Version: $SELF_VERSION
+EOF
+}
+
+function msg {
+  echo "> $@"
+}
+
+function err {
+  echo "> $@" >&2
+}
+
+function list_deb_url {
+  # there should not be any deb files in the cache folder
+  apt-get install --print-uris -qq -o Dir::Cache::Archives=$DIR_EMPTY $@ \
+  | grep '\.deb' | cut -d "'" -f2
+}
+
+function pull_deb {
+  url="$1"
+  msg "pulling $url"
+  file="${url##*/}"
+  msg "saving $file"
+
+  if [[ "$NO_CLOBBER" == 'y' ]]; then
+    if [[ -e "$file" ]]; then
+      msg "file exists, skip"
+      return
+    fi
+  fi
+  if [[ "$DRY_RUN" != 'y' ]]; then
+    wget -q -c $url
+  fi
+}
+
+function create_svc_conf {
+  mkdir -p "$(dirname $1)"
+  cat <<'EOF' > $1
+server {
+    listen       8080;
+    server_name  localhost;
+    location / {
+        root /file;
+        autoindex on;
+        autoindex_exact_size off;
+        autoindex_localtime on;
+        charset utf-8;
+    }
+}
+EOF
+
+}
+
+if [[ -z "$1" || "$1" == "-h" ]]; then
+  usage && exit
+else
+  cmd="$1"
+  shift
+fi
+
+mkdir -p $DIR_DEBS $DIR_FILE $DIR_EMPTY
+
+if [[ "$cmd" == "list" ]]; then
+  if [[ -z "$1" ]]; then
+    err "no repository is provided"
+    exit 1
+  fi
+  list_deb_url "$@" && exit
+elif [[ "$cmd" == "pull" ]]; then
+  if [[ -t 0 ]]; then
+    # pass args into stdin
+    exec < <(printf '%s\n' "$@")
+  fi
+  while IFS= read -r url; do
+    if [[ "$url" != *.deb ]]; then
+      msg "ingore $url" && continue
+    fi
+    msg "processing $url"
+    (cd $DIR_FILE && pull_deb "$url")
+  done
+elif [[ "$cmd" == "serve" ]]; then
+  if [[ ! -f $SVC_CONF ]]; then
+     msg "create $SVC_CONF"
+     create_svc_conf $SVC_CONF
+  fi
+  if $SUDO docker container inspect -f '{{.ID}}' $SVC_NAME >/dev/null; then
+    msg "stop and delete the old container: $SVC_NAME"
+    $SUDO docker rm -f $SVC_NAME
+  fi
+  msg "create container $SVC_NAME"
+  $SUDO docker create --name $SVC_NAME \
+    -v $(realpath $DIR_FILE):/file \
+    -v $(realpath $SVC_CONF):/etc/nginx/conf.d/file.conf \
+    -p $SVC_PORT:8080 --restart unless-stopped \
+    nginx:1.23.4-alpine
+  msg "start container $SVC_NAME"
+  $SUDO docker start $SVC_NAME
+  msg "generate deb index file"
+  (cd $DIR_FILE && dpkg-scanpackages -m . > Packages)
+
+  hostip=$(ip route get 1 | head -1 | awk '{print $7}')
+  baseurl="http://$hostip:$SVC_PORT"
+  cat <<EOF
+# check the local repo
+  no_proxy='*' curl $baseurl
+# configure apt to use local repo
+  cat <<EOC | sudo tee /etc/apt/sources.list.d/local.list
+deb [trusted=yes] $baseurl /
+EOC
+  sudo apt update -o Acquire::http::Proxy::$hostip=DIRECT
+EOF
+else
+  err "not supported cmd: $cmd"
+  exit 1
+fi
+
+msg "done"
