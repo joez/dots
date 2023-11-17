@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.06.26
+# version: 23.11.18
 
 DEMO_SPEED="${DEMO_SPEED:-4}"    # input speed [0 - 9]
 DEMO_PS="${DEMO_PS:-\u@\h:\W$ }" # PS1 for demo
@@ -66,6 +66,19 @@ function demo_hook {
   else
     echo
   fi
+}
+
+function demo_eval {
+  demo_prompt && demo_input "$*"
+  if [[ $DEMO_WAIT == 'on' ]]; then
+    read
+  else
+    echo
+  fi
+  local old_mode="$DEMO_MODE"
+  DEMO_MODE="off"
+  eval "$*"
+  DEMO_MODE="$old_mode"
 }
 
 function demo_ctl {
@@ -142,9 +155,14 @@ EOF
   demo_init
 
   msg "Message to the user, press ENTER to continue"
-  msg "Message with the variable \$self: $self"
+  msg "Message with a variable \$self: $self"
+
+  msg "Run simple command directly"
   echo "Run the 'echo' command"
   pwd
+
+  msg "Evaluate and execute complex command with 'demo_eval'"
+  demo_eval 'for i in 1 2 3; do echo $i; done'
 
   msg "Turn off the demo mode with 'demo_ctl off'"
   demo_ctl off
