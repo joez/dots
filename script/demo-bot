@@ -3,7 +3,7 @@
 # version: 23.11.18
 
 DEMO_SPEED="${DEMO_SPEED:-4}"    # input speed [0 - 9]
-DEMO_PS="${DEMO_PS:-\u@\h:\W$ }" # PS1 for demo
+DEMO_PS="${DEMO_PS:-\u@\h:\w$ }" # PS1 for demo
 
 DEMO_WAIT="on"                   # wait on each command
 DEMO_DELAY="on"                  # delay to simulate user input
