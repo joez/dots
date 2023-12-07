@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.12.07
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+NAME="${SELF#*-}"
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+VERSION="0.28.0"      # version to deploy
+DRY_RUN=n             # print information only
+MIRROR="auto"         # mirror option
+MIRRORS="yes no auto" # valid mirror options
+RESET=n               # reset the deployment
+UNINSTALL=n           # reset the deployment and uninstall components
+OFFLINE=${OFFLINE:-n} # no external network
+
+REPO_URL="https://github.com/intel/intel-device-plugins-for-kubernetes"
+MIRROR_URL="${MIRROR_URL:-https://ghps.cc}"
+GCLOUD_URL="https://packages.cloud.google.com"
+
+VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
+TIMEOUT="300s"
+NAMESPACE="default"
+
+CACHE="cache"
+CACHE_MANIFESTS="$CACHE/manifests"
+CACHE_PACKAGES="$CACHE/packages/common"
+CACHE_RUN="$CACHE/run/$SELF"
+
+function msg() {
+  echo "> $@"
+}
+
+function err() {
+  echo "> $@" >&2
+}
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [-m <type>] [-v <ver>] [-R] [-U] [-n] [-h]
+
+  Deploy $NAME in Kubernetes cluster the easy way
+
+  -m <type>: use mirror [$MIRRORS], default: $MIRROR
+  -v <ver>:  target version, default: $VERSION
+  -R:        reset the deployment, default: $RESET
+  -U:        reset the deployment and uninstall components, default: $UNINSTALL
+  -n:        print information only, default: $DRY_RUN
+  -h:        print the usage message
+
+Cache:
+
+  To speed up deployment, the required files will be cached at "$CACHE"
+
+Environment variables:
+  MIRROR_URL:  mirror to use, default: $MIRROR_URL
+  OFFLINE:     force into offline mode [y n], default: $OFFLINE
+
+Examples:
+
+  1. Deploy $NAME
+     $SELF
+
+  2. Reset the deployment
+     $SELF -R
+
+  3. Deploy $NAME with specific version
+     $SELF -v $VERSION
+
+  4. Reset the deployment and uninstall
+     $SELF -U
+
+Version: $SELF_VERSION
+EOF
+
+}
+
+function current_version() {
+  local version=
+  if which kubectl >/dev/null; then
+    version="$(kubectl describe -n $NAMESPACE ds/intel-gpu-plugin 2>/dev/null | sed -n 's/^\s*Image:\s*.*://p')"
+  fi
+  echo $version
+}
+
+HAS_NFD=n
+function check_nfd() {
+  msg "check NFD"
+  # TODO: find more stable way to probe NFD
+  local ns="node-feature-discovery"
+  if kubectl get -n $ns deploy/nfd-master >/dev/null 2>&1; then
+    HAS_NFD=y
+  fi
+  msg "NFD is deployed: $HAS_NFD"
+}
+
+function main() {
+  # adjust default version if already deployed
+  local deployed="$(current_version)"
+  VERSION="${deployed:-$VERSION}"
+
+  while getopts ":m:v:hnRU" opt
+  do
+    case $opt in
+      m ) MIRROR=$OPTARG
+          if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
+            err "invalid mirror option $MIRROR"
+            usage && exit 1
+          fi
+          ;;
+      v ) VERSION=${OPTARG#v};;
+      R ) RESET=y;;
+      U ) RESET=y && UNINSTALL=y;;
+      n ) DRY_RUN=y;;
+      h ) usage && exit;;
+      * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
+    esac
+  done
+  shift $((OPTIND-1))
+
+  for v in CACHE DRY_RUN MIRROR MIRROR_URL OFFLINE RESET UNINSTALL VERSION
+  do
+    eval echo "$v: \${$v}"
+  done
+
+  msg "deployed version: $deployed"
+
+  [[ $DRY_RUN == "y" ]] && exit
+
+  check_prerequisites
+  check_network
+  check_mirror
+  check_nfd
+  ensure_workdir
+
+  local dir_deploy="deployments"
+  local dir_plugin="intel-device-plugins"
+  local manifest_dir="$CACHE_MANIFESTS/$dir_plugin-$VERSION"
+  local manifest_dir_deploy="$manifest_dir/$dir_deploy"
+  local package_dir="$CACHE_PACKAGES/$dir_plugin-$VERSION"
+  local package_file="v$VERSION.tar.gz"
+  local package_path="$package_dir/$package_file"
+
+  mkdir -p $package_dir $manifest_dir
+
+  local base_url="$REPO_URL"
+  if [[ $NEED_MIRROR == "y" ]]; then
+    base_url="$MIRROR_URL/$REPO_URL"
+  fi
+
+  msg "download intel-device-plugin"
+  if [[ ! -e "$package_path" ]]; then
+    if [[ $OFFLINE == "y" ]]; then
+      err "no cache found: $package_path"
+      exit 1
+    else
+      local package_url="$base_url/archive/refs/tags/$package_file"
+      msg "download $package_url -> $package_path"
+      curl -L $package_url > $package_path
+    fi
+  fi
+
+  msg "prepare manifest"
+  if [[ ! -d "$manifest_dir_deploy" ]]; then
+    msg "extract $package_path -> $manifest_dir_deploy"
+    tar xzf $package_path -C $manifest_dir --strip-components=1 --no-wildcards-match-slash --wildcards "*/$dir_deploy/"
+  fi
+
+  if [[ $RESET == "y" ]]; then
+    msg "delete $NAME deployment (if any)"
+    kubectl delete --ignore-not-found -k "$manifest_dir_deploy/nfd/overlays/node-feature-rules" 2>/dev/null || true
+    kubectl delete --ignore-not-found -k "$manifest_dir_deploy/gpu_plugin"
+  else
+    msg "deploy $NAME (with NFD: $HAS_NFD)"
+    local modules="gpu_plugin"
+    if [[ $HAS_NFD == "y" ]]; then
+      modules="nfd/overlays/node-feature-rules gpu_plugin/overlays/monitoring_shared-dev_nfd"
+    fi
+    for m in $modules; do
+      kubectl apply -k "$manifest_dir_deploy/$m"
+    done
+  fi
+
+  if [[ $RESET != "y" ]]; then
+    msg "wait until ready (timeout: $TIMEOUT)"
+    kubectl -n $NAMESPACE rollout status ds/intel-gpu-plugin --timeout $TIMEOUT
+
+    cat <<EOF
+
+# here are some tips to follow:
+# check current status
+kubectl get -n $NAMESPACE ds
+
+# check GPU PCI ID
+lspci | grep -e VGA -e Display | grep Intel
+
+# check more details from $REPO_URL
+EOF
+  fi
+
+  msg "done"
+}
+
+function check_prerequisites() {
+  msg "check prerequisites"
+  if [[ -z $(which kubelet) ]]; then
+    err "kubelet is not available"
+    exit 1
+  fi
+  if [[ -z $(which curl) ]]; then
+    err "curl is not available"
+    exit 1
+  fi
+  if ! kubectl version >/dev/null 2>&1; then
+    err "can't access k8s cluster"
+    exit 1
+  fi
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! curl -s -m 3 -I example.com >/dev/null; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+NEED_MIRROR=n
+function check_mirror() {
+  msg "is mirror needed"
+  if [[ $MIRROR == "auto" ]]; then
+    MIRROR=yes # default as needed
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
+    else
+      msg "check whether we can access google cloud"
+      local target="$GCLOUD_URL"
+      if curl -s -m 5 $target >/dev/null 2>&1; then
+        msg "curl $target is OK"
+        MIRROR=no
+      else
+        msg "curl $target is FAILED"
+      fi
+    fi
+  fi
+  if [[ $MIRROR == "yes" ]]; then
+    NEED_MIRROR=y
+  fi
+  msg "need mirror: $NEED_MIRROR"
+}
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+main "$@"
