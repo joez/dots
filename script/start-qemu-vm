@@ -28,20 +28,19 @@ function usage() {
   local version="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 
   cat <<EOF
-Usage: $self [-b <base>][-c <cpu>][-i <iso>][-m <mem>][-s <share>][-n][-h] [<count>]
+Usage: $self [-b <base>][-c <cpu>][-i <iso>][-m <mem>][-s <share>][-h][-n] [<count>]
   Start QEMU VMs each with two network interfaces, vnc display, ssh port forwarding,
   monitor through telnet, and shared folder with the host
 
   -b <base>:  base index of the VM, default: $BASE
   -c <cpu>:   logical cpu cores, default: $CPU
+  -h:         print the usage message
   -i <iso>:   ISO image file for the OS installation, default: $ISO
   -m <mem>:   memory, default: $MEM
   -n:         dry run, print out information only, default: $DRY_RUN
   -s <share>: shared folder between host and VMs, "none" to disable, default: $SHARE
 
   <count>:    number of the VMs, default: $COUNT
-
-  -h:         print the usage message
 
   We assume the index of the VM is consecutive, e.g.:
   if the base index is 0, the 2 VMs will be named ${VM_PREFIX}0 and ${VM_PREFIX}1
@@ -88,15 +87,15 @@ function gen_mac() {
   crc32 <(echo -n "$*") | sed 's/../& /g' | xargs printf "52:54:%s:%s:%s:%s"
 }
 
-while getopts ":hb:c:i:nm:s:" opt; do
+while getopts ":b:c:hi:nm:s:" opt; do
   case $opt in
     b ) BASE=$OPTARG;;
     c ) CPU=$OPTARG;;
+    h ) usage && exit;;
     i ) ISO=$OPTARG;;
     m ) MEM=$OPTARG;;
     n ) DRY_RUN=y;;
     s ) SHARE=$OPTARG;;
-    h ) usage && exit;;
     * ) usage && exit 1;;
   esac
 done
