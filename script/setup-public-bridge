@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 21.12.08
+
+function list_nic() {
+  for i in $(ls -d /sys/class/net/*); do
+    if [[ "$(cat $i/operstate)" == "up" ]]; then
+       if readlink $i | grep -qv virtual; then
+         echo ${i##*/}
+       fi
+    fi
+  done
+}
+
+NAME="br0"
+BASE=0
+COUNT=2
+NIC=$(list_nic | tail -n1) # last physical network device as default
+TAP_PREFIX="tap"
+DELETE="n"
+DRY_RUN="n"
+
+function usage() {
+  local self=`basename $0`
+  local version="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+  cat <<EOF
+Usage: $self [-b <base>] [-d <nic>] [-D] [-N <name>] [-n] [-h] [<count>]
+  Create a network bridge, and then attach a physical network interface
+  and the created tap devices ($TAP_PREFIX*) to it
+
+  -b <base>:  base index of the tap devices, default: $BASE
+  -d <nic>:   physical network interface, default: $NIC
+  -D:         delete created bridge and detach NIC, default: $DELETE
+  -n:         dry run, print out information only, default: $DRY_RUN
+  -N <name>:  name of the bridge, default: $NAME
+  -h:         print the usage message
+
+  <count>:    number of the tap devices, default: $COUNT
+
+Examples:
+  # Check information before actual execution
+  $self -n
+
+  # Create bridge $NAME, attach physical NIC $NIC and $COUNT tap devices
+  $self
+
+  # Detach physical NIC $NIC and tap devices, then delete bridge $NAME
+  $self -D
+
+  # Create bridge br1, attach physical NIC $NIC and 1 tap device ${TAP_PREFIX}10
+  $self -b 10 -N br1 1
+
+Version: $version
+EOF
+
+}
+
+while getopts ":b:d:DnN:h" opt
+do
+  case $opt in
+    b ) BASE=$OPTARG;;
+    d ) NIC=$OPTARG;;
+    D ) DELETE="y";;
+    n ) DRY_RUN=y;;
+    N ) NAME=$OPTARG;;
+    h ) usage && exit;;
+    * ) usage && exit 1;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+if [[ -n $1 && $1 > 0 ]]; then
+  COUNT=$1
+fi
+
+if [[ $DRY_RUN == 'y' ]]; then
+  for v in BASE COUNT DELETE NAME NIC TAP_PREFIX; do
+    eval echo "$v: \${$v}"
+  done
+  exit
+fi
+
+br="$NAME"
+
+if [[ "$(id -u)" != "0" ]]; then
+  echo "run as root please, exit"
+  exit 1
+fi
+
+if list_nic | grep -qv $NIC; then
+  echo "the target NIC ($NIC) is not a physical device or it can't be found"
+  exit 1
+fi
+
+if [[ $DELETE == "y" ]]; then
+  for ((i=BASE; i<BASE+COUNT; i++)); do
+    tap="$TAP_PREFIX$i"
+
+    echo "detach $tap"
+    ip link set $tap nomaster
+    ip link set $tap down
+
+    echo "delete $tap"
+    ip link delete $tap
+  done
+
+  echo "detach $NIC"
+  ip link set $NIC nomaster
+  ip link set $NIC down
+
+  echo "delete $br"
+  ip link delete $br type bridge
+
+  echo "bring up $NIC again"
+  ip link set $NIC up
+  dhclient -v $NIC
+
+  exit # nothing to do, quit now
+fi
+
+echo "disable bridge-netfilter"
+sysctl -w net.bridge.bridge-nf-call-ip6tables=0
+sysctl -w net.bridge.bridge-nf-call-iptables=0
+sysctl -w net.bridge.bridge-nf-call-arptables=0
+sysctl -w net.bridge.bridge-nf-filter-vlan-tagged=0
+
+echo "create bridge if necessary"
+if ip link show dev $br; then
+  echo "bridge $br already exist, skip"
+else
+  echo "create bridge $br"
+  ip link add $br type bridge
+
+  echo "attach network interface: $NIC"
+  ip link set $NIC up
+  ip addr flush dev $NIC
+  ip link set $NIC master $br
+  
+  echo "bring up $br"
+  ip link set dev $br up
+
+  echo "get the IP address for $br"
+  dhclient -v $br
+fi
+
+# create tap and attach to the bridge
+for ((i=BASE; i<BASE+COUNT; i++)); do
+  tap="$TAP_PREFIX$i"
+  if ip link show dev $tap; then
+    echo "tap $tap already exist, skip"
+  else
+    echo "create tap $tap"
+    ip tuntap add $tap mode tap user $(whoami)
+    ip link set dev $tap up
+
+    echo "attach $tap to $br"
+    ip link set $tap master $br
+  fi
+done
