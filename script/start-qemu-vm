@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.12.08
+
+set -e
+
+BASE=0
+COUNT=1
+ISO="none"
+CPU=2
+MEM="4G"
+SHARE="share"
+
+DRY_RUN="n"
+HOST_NAME="$(cat /proc/sys/kernel/hostname)"
+HOST_ADDR="$(ip route get 1 | head -1 | awk '{print $7}')"
+HOST_ID="$([ -e /etc/machine-id ] && cat /etc/machine-id || hostid)"
+QEMU_EXEC="qemu-system-x86_64"
+VM_PREFIX="vm-"
+TAP_PREFIX="tap"
+DNS_SEARCH="dnssearch=sh.intel.com,dnssearch=intel.com"
+
+NO_DEF_NET="${NO_DEFAULT_NETWORK:-n}"
+NO_BRG_NET="${NO_BRIDGE_NETWORK:-y}"
+
+function usage() {
+  local self=`basename $0`
+  local version="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+  cat <<EOF
+Usage: $self [-b <base>][-c <cpu>][-i <iso>][-m <mem>][-s <share>][-n][-h] [<count>]
+  Start QEMU VMs each with two network interfaces, vnc display, ssh port forwarding,
+  monitor through telnet, and shared folder with the host
+
+  -b <base>:  base index of the VM, default: $BASE
+  -c <cpu>:   logical cpu cores, default: $CPU
+  -i <iso>:   ISO image file for the OS installation, default: $ISO
+  -m <mem>:   memory, default: $MEM
+  -n:         dry run, print out information only, default: $DRY_RUN
+  -s <share>: shared folder between host and VMs, "none" to disable, default: $SHARE
+
+  <count>:    number of the VMs, default: $COUNT
+
+  -h:         print the usage message
+
+  We assume the index of the VM is consecutive, e.g.:
+  if the base index is 0, the 2 VMs will be named ${VM_PREFIX}0 and ${VM_PREFIX}1
+
+  The file name of the disk image matches the VM index, e.g. ${VM_PREFIX}0 will use ${VM_PREFIX}0.img
+
+  The tap device name matches the VM index too, e.g. ${VM_PREFIX}0 will use ${TAP_PREFIX}0.
+  The tap devices should be created and configured in advance
+
+  The MAC address of the network interface is derived from VM name, it is deterministic
+
+  The share folder need to be mounted in the VM, e.g.:
+
+    mkdir -p /mnt/share && \\
+    mount -t 9p -o trans=virtio,version=9p2000.L,msize=512000 share /mnt/share
+
+Environment variables:
+  NO_DEFAULT_NETWORK:   "y" to disable the default network interface, default: $NO_DEF_NET
+  NO_BRIDGE_NETWORK:    "y" to disable the bridge network interface, default: $NO_BRG_NET
+
+Examples:
+  # Check information before actual execution
+  $self -n
+
+  # Start a VM to install OS from an ISO image
+  $self -i ubuntu-16.04.6-server-amd64.iso
+
+  # Start a VM named ${VM_PREFIX}$BASE
+  $self
+
+  # Start a VM named ${VM_PREFIX}$BASE with bridged network interface
+  NO_BRIDGE_NETWORK=n $self
+
+  # Start 2 VMs named ${VM_PREFIX}1 and ${VM_PREFIX}2, each has 2 cores and 1G memory
+  # the "host" folder will be used to share data between host and VMs
+  $self -c 2 -m 1G -b 1 -s host 2
+
+Version: $version
+EOF
+
+}
+
+function gen_mac() {
+  crc32 <(echo -n "$*") | sed 's/../& /g' | xargs printf "52:54:%s:%s:%s:%s"
+}
+
+while getopts ":hb:c:i:nm:s:" opt; do
+  case $opt in
+    b ) BASE=$OPTARG;;
+    c ) CPU=$OPTARG;;
+    i ) ISO=$OPTARG;;
+    m ) MEM=$OPTARG;;
+    n ) DRY_RUN=y;;
+    s ) SHARE=$OPTARG;;
+    h ) usage && exit;;
+    * ) usage && exit 1;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+# ensure we can find qemu as root user
+local_bin="/usr/local/bin"
+if [[ $PATH != *"$local_bin"* ]]; then
+  PATH="$local_bin:$PATH"
+fi
+
+[[ $DRY_RUN == "y" ]] && QEMU_EXEC="echo $QEMU_EXEC"
+
+if [[ -n $1 && $1 > 0 ]]; then
+  COUNT=$1
+fi
+
+CDROM=""
+if [[ $ISO != "none" ]]; then
+    CDROM="-cdrom $ISO"
+fi
+
+for ((i=BASE; i<BASE+COUNT; i++)); do
+  name=${VM_PREFIX}$i
+  tap=${TAP_PREFIX}$i
+  vnc=$((i + 10))     # vnc to 5900 + 10 + $i
+  ssh=$((i + 2200))   # ssh to 2200 + $i
+  con=$((i + 3300))   # access console by telnet to 3300 + $i
+  mon=$((i + 4400))   # access monitor by telnet to 4400 + $i
+
+  # to ensure there is no mac address conflict
+  mac1=$(gen_mac $HOST_ID.${name}.1)
+  mac2=$(gen_mac $HOST_ID.${name}.2)
+
+  # generate a stable uuid
+  uuid=$(uuidgen -s -n @dns -N $HOST_ID.$name)
+
+  extra=""
+
+  # default network
+  if [[ $NO_DEF_NET != y ]]; then
+    hostfwd="hostfwd=tcp::$ssh-:22"
+    extra="$extra -netdev user,id=netdef,hostname="$HOST_NAME-$name",$DNS_SEARCH,$hostfwd \
+          -device virtio-net,disable-modern=off,netdev=netdef,mac=$mac1"
+  fi
+  # bridge network
+  if [[ $NO_BRG_NET != y ]]; then
+    extra="$extra -netdev tap,id=neths,ifname=$tap,vhost=on,script=no,downscript=no \
+          -device virtio-net,disable-modern=off,netdev=neths,mac=$mac2"
+  fi
+
+  # shared folder
+  if [[ -n $SHARE && $SHARE != "none" ]]; then
+    if [[ -d $SHARE ]]; then
+      SHARE="$(cd $SHARE && pwd -P)"
+    else
+      mkdir -p $SHARE
+    fi
+    extra="$extra -fsdev local,security_model=mapped,id=fsshare,path=$SHARE \
+          -device virtio-9p-pci,fsdev=fsshare,mount_tag=share"
+  fi
+
+  # vfio device assignment
+  if [[ -x "get-vfio-dev" ]]; then
+    extra="$extra $(./get-vfio-dev $i)"
+  fi
+
+  $QEMU_EXEC \
+    -enable-kvm \
+    -machine kernel_irqchip=on \
+    -cpu host \
+    -vga std \
+    -display vnc=:$vnc \
+    -monitor telnet::$mon,server,nowait \
+    -serial telnet::$con,server,nowait \
+    -daemonize \
+    -smp $CPU \
+    -m $MEM \
+    -name $name \
+    -uuid $uuid \
+    -boot order=cd,once=d $CDROM \
+    -drive file=${VM_PREFIX}$i.img,if=virtio \
+    -global PIIX4_PM.disable_s3=1 -global PIIX4_PM.disable_s4=1 \
+    $extra
+
+  if [[ $NO_DEF_NET != y ]]; then
+    forward_disabled=""
+  else
+    forward_disabled=" (disabled)"
+  fi
+
+  cat <<EOF
+  name:     $name
+  uuid:     $uuid
+  host-ip:  $HOST_ADDR
+  vnc-port: $((vnc + 5900))
+  ssh-port: $ssh$forward_disabled
+  con-port: $con
+  mon-port: $mon
+
+EOF
+done
