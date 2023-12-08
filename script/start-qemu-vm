@@ -72,7 +72,7 @@ Examples:
   $self
 
   # Start a VM named ${VM_PREFIX}$BASE with bridged network interface
-  NO_BRIDGE_NETWORK=n $self
+  sudo env NO_BRIDGE_NETWORK=n $self
 
   # Start 2 VMs named ${VM_PREFIX}1 and ${VM_PREFIX}2, each has 2 cores and 1G memory
   # the "host" folder will be used to share data between host and VMs
