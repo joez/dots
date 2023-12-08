@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.12.08
+
+set -e
+
+BASE=0
+COUNT=2
+IMAGE="vm-base.img"
+FORCE="n"
+DRY_RUN="n"
+
+FORMAT="qcow2"
+VM_PREFIX="vm-"
+IMG_SUFFIX=".img"
+
+function usage() {
+  local self=`basename $0`
+  local version="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+  cat <<EOF
+Usage: $self [-b <base>] [-f] [-n] [-h] [<count>] [<image>]
+  Clone VM disk image from the base one to save storage
+
+  -b <base>:  base index of the VM, default: $BASE
+  -f:         overwrite image forcibly, default: $FORCE
+  -n:         dry run, print out information only, default: $DRY_RUN
+  -h:         print the usage message
+
+  <count>:    number of VMs, default: $COUNT
+  <image>:    the base image, default: $IMAGE
+
+  We assume the index of the VM is consecutive, e.g.: if the  base index is 0,
+  the 2 images will be named ${VM_PREFIX}0${IMG_SUFFIX} and ${VM_PREFIX}1${IMG_SUFFIX}
+
+Examples:
+  # Check information before actual execution
+  $self -n
+
+  # Replicate $COUNT disk images from $IMAGE
+  $self
+
+  # Replicate $COUNT disk images from $IMAGE, overwrite images if already exist
+  $self -f
+
+  # Replicate 2 disk images from base.img, the output is vm-10.img and vm-11.img
+  $self -b 10 2 base.img
+
+Version: $version
+EOF
+
+}
+
+while getopts ":b:fhn" opt
+do
+  case $opt in
+    b ) BASE=$OPTARG;;
+    f ) FORCE=y;;
+    n ) DRY_RUN=y;;
+    h ) usage && exit;;
+    * ) usage && exit 1;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+COUNT=${1:-$COUNT}
+IMAGE=${2:-$IMAGE}
+
+if [[ ! -e $IMAGE ]]; then
+  echo "can't find $IMAGE"
+  exit 1
+fi
+
+for ((i=BASE; i<BASE+COUNT; i++)); do
+  dest="$VM_PREFIX${i}$IMG_SUFFIX"
+
+  if [[ $FORCE != 'y' && -e $dest ]]; then
+    echo "$dest already exits, quit"
+    exit 1
+  fi
+
+  echo "clone $IMAGE to $dest, format: $FORMAT"
+  if [[ $DRY_RUN != "y" ]]; then
+    qemu-img create -f $FORMAT -F $FORMAT -b $IMAGE $dest
+    echo "$dest is created"
+  fi
+done
