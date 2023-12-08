@@ -16,17 +16,16 @@ function usage() {
   local version="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 
   cat <<EOF
-Usage: $self [-a <addr>][-p <port>][-b <base>][-h] [<count>]
+Usage: $self [-a <addr>] [-p <port>] [-b <base>] [-n] [-h] [<count>]
   Stop a number of QEMU VMs through the QEMU monitor gently
 
   -a <addr>:  address of the QEMU monitor, default: $ADDR
   -p <port>:  base port of the QEMU monitor, default: $PORT
   -b <base>:  base index of the VM, default: $BASE
   -n:         dry run, print out information only, default: $DRY_RUN
+  -h:         print the usage message
 
   <count>:    number of the VMs, default: $COUNT
-
-  -h:         print the usage message
 
   We assume the port number of the QEMU monitor for each VM is consecutive,
   e.g., if the base port is 4400, the ports of the 2 VMs should be 4400 and 4401
@@ -54,13 +53,13 @@ EOF
 
 }
 
-while getopts ":hna:b:p:" opt; do
+while getopts ":a:b:hnp:" opt; do
   case $opt in
     a ) ADDR=$OPTARG;;
     b ) BASE=$OPTARG;;
-    p ) PORT=$OPTARG;;
-    n ) DRY_RUN=y;;
     h ) usage && exit;;
+    n ) DRY_RUN=y;;
+    p ) PORT=$OPTARG;;
     * ) usage && exit 1;;
   esac
 done
