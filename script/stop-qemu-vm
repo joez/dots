@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.12.08
+
+set -e
+
+ADDR="localhost"
+PORT=4400
+BASE=0
+COUNT=1
+
+DRY_RUN="n"
+
+function usage() {
+  local self=`basename $0`
+  local version="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+  cat <<EOF
+Usage: $self [-a <addr>][-p <port>][-b <base>][-h] [<count>]
+  Stop a number of QEMU VMs through the QEMU monitor gently
+
+  -a <addr>:  address of the QEMU monitor, default: $ADDR
+  -p <port>:  base port of the QEMU monitor, default: $PORT
+  -b <base>:  base index of the VM, default: $BASE
+  -n:         dry run, print out information only, default: $DRY_RUN
+
+  <count>:    number of the VMs, default: $COUNT
+
+  -h:         print the usage message
+
+  We assume the port number of the QEMU monitor for each VM is consecutive,
+  e.g., if the base port is 4400, the ports of the 2 VMs should be 4400 and 4401
+  
+  You need to wait for a while to let the QEMU shutdown the VM gently,
+  if you are impatient, access to the monitor by telnet and run commands:
+
+  # check status
+  info status
+  # stop directly
+  stop
+
+Examples:
+  # Check information before actual execution
+  $self -n
+
+  # Stop a VM via QEMU monitor at $ADDR:$PORT
+  $self
+
+  # Stop 2 VMs via QEMU monitor at 192.168.0.1, port: 4000, 4001 
+  $self -a 192.168.0.1 -p 4000 2
+
+Version: $version
+EOF
+
+}
+
+while getopts ":hna:b:p:" opt; do
+  case $opt in
+    a ) ADDR=$OPTARG;;
+    b ) BASE=$OPTARG;;
+    p ) PORT=$OPTARG;;
+    n ) DRY_RUN=y;;
+    h ) usage && exit;;
+    * ) usage && exit 1;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+if [[ -n $1 && $1 > 0 ]]; then
+  COUNT=$1
+fi
+
+for ((i=BASE; i<BASE+COUNT; i++)); do
+  host=$ADDR
+  port=$(($PORT + $i))
+
+  echo "connecting to the monitor $host:$port"
+  name=$(echo "info name" | nc $host $port 2>/dev/null | head -n3 | tail -n1 | tr -d '\r\n')
+
+  if [[ -n "$name" ]]; then
+    echo "shutdown VM $name gently, wait for a while to finish"
+    if [[ $DRY_RUN != "y" ]]; then
+      echo "system_powerdown" | nc $host $port >/dev/null
+    fi
+    echo
+  else
+    echo "fail to connect" >&2
+    exit 1
+  fi
+done
