@@ -59,11 +59,13 @@ CRI_RUNTIME="${CRI_RUNTIME:-$DEF_RUNTIME}"  # CRI runtime to use
 
 CRI_CLIENT="docker"   # CRI client, such as docker, ctr
 
+MIRROR_URL="${MIRROR_URL:-https://ghps.cc}"
+
 FLANNEL_VERSION="${FLANNEL_VERSION:-0.21.5}"                  # flannel version
-FLANNEL_BASEURL="https://raw.githubusercontent.com/flannel-io/flannel"
+FLANNEL_BASEURL="https://github.com/flannel-io/flannel"
 
 LOCALPP_VERSION="${LOCALPP_VERSION:-0.0.24}"                  # local path provisioner version
-LOCALPP_BASEURL="https://raw.githubusercontent.com/rancher/local-path-provisioner"
+LOCALPP_BASEURL="https://github.com/rancher/local-path-provisioner"
 
 CRI_DOCKERD_VERSION="${CRI_DOCKERD_VERSION:-0.3.2}"           # cri-dockerd version
 CRI_DOCKERD_BASEURL="https://github.com/Mirantis/cri-dockerd" # cri-dockerd repo url
@@ -135,6 +137,14 @@ Offline mode:
 
   The offline mode will be enabled automatically through network detection.
   You can also force it by setting environment variable "OFFLINE=y"
+
+Environment variables:
+  MIRROR_URL:          mirror to use for GitHub, default: $MIRROR_URL
+  OFFLINE:             force into offline mode [y n], default: $OFFLINE
+  INIT_WORKDIR:        initialize workdir and quit if "y", default: $INIT_WORKDIR
+  FLANNEL_VERSION:     flannel version, default: $FLANNEL_VERSION
+  LOCALPP_VERSION:     local path provisioner version, default: $LOCALPP_VERSION
+  CRI_DOCKERD_VERSION: cri-dockerd version, default: $CRI_DOCKERD_VERSION
 
 Examples:
 
@@ -339,6 +349,23 @@ function ensure_cri_dockerd_uninstalled() {
   fi
 }
 
+function mirror_url() {
+  local origin="${1:?argument missing}"
+
+  if [[ -z "$MIRROR_URL_IS_OK" ]]; then
+    MIRROR_URL_IS_OK="n" # only one chance
+    if curl -s -m 5 $MIRROR_URL >/dev/null 2>&1; then
+      MIRROR_URL_IS_OK="y"
+    else
+      err "failed to access mirror ($MIRROR_URL)"
+    fi
+  fi
+  if [[ $NEED_MIRROR == "y" ]] && [[ $MIRROR_URL_IS_OK == "y" ]]; then
+    echo -n "$MIRROR_URL/$url"
+  fi
+  echo -n "$origin"
+}
+
 function install_cri_dockerd_if_needed() {
   msg "install cri-dockerd if needed"
 
@@ -346,7 +373,7 @@ function install_cri_dockerd_if_needed() {
 
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
     local ver="$CRI_DOCKERD_VERSION"
-    local url="$CRI_DOCKERD_BASEURL"
+    local url="$(mirror_url $CRI_DOCKERD_BASEURL)"
 
     if systemctl is-active cri-docker.socket >/dev/null; then
       v="$(cri-dockerd --version 2>&1 | awk '{print $2}')"
@@ -369,11 +396,15 @@ function install_cri_dockerd_if_needed() {
     else
       msg "download into $dir"
       if [[ ! -e $dir/cri-dockerd ]]; then
-        curl -sL ${url}/releases/download/v${ver}/cri-dockerd-${ver}.amd64.tgz | tar xz -C $dir --strip-components=1
+        local u="${url}/releases/download/v${ver}/cri-dockerd-${ver}.amd64.tgz"
+        msg "downloading $u"
+        curl -sL $u | tar xz -C $dir --strip-components=1
       fi
       for f in cri-docker.{service,socket}; do
         if [[ ! -e $dir/$f ]]; then
-          curl -sL $url/raw/v${ver}/packaging/systemd/$f > $dir/$f
+          local u="$url/raw/v${ver}/packaging/systemd/$f"
+          msg "downloading $u"
+          curl -sL $u > $dir/$f
         fi
       done
     fi
@@ -917,15 +948,20 @@ function init_cluster() {
   local flannel_mod="$CACHE_RUN/kube-flannel.mod.yml"
   msg "download flannel manifest"
   if [[ ! -e $flannel ]]; then
-    curl $FLANNEL_BASEURL/v$FLANNEL_VERSION/Documentation/kube-flannel.yml > $flannel
+    local u="$(mirror_url $FLANNEL_BASEURL)/raw/v$FLANNEL_VERSION/Documentation/kube-flannel.yml"
+    msg "download $u -> $flannel"
+    curl -sL $u > $flannel
   fi
 
   local localpp_dir="$CACHE_MANIFESTS/local-path-provisioner-$LOCALPP_VERSION"
   mkdir -p $localpp_dir
+
   local localpp="$localpp_dir/local-path-storage.yaml"
   msg "download local-path-provisioner manifest"
   if [[ ! -e $localpp ]]; then
-    curl $LOCALPP_BASEURL/v$LOCALPP_VERSION/deploy/local-path-storage.yaml > $localpp
+    local u="$(mirror_url $LOCALPP_BASEURL)/raw/v$LOCALPP_VERSION/deploy/local-path-storage.yaml"
+    msg "download $u -> $localpp"
+    curl -sL $u > $localpp
   fi
 
   # different CNI addon requires different pod-network-cider, here is for flannel
