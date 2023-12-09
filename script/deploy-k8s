@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.10.14
+# version: 23.12.09
 
 set -e
 
@@ -71,8 +71,8 @@ CRI_DOCKERD_SOCKET="unix:///var/run/cri-dockerd.sock"         # cri-dockerd sock
 
 CRI_CONTAINERD_SOCKET="unix:///run/containerd/containerd.sock" # containerd socket path
 
-K8S_PKG_BASEURL="https://packages.cloud.google.com"           # base url of k8s packages
-K8S_PKG_MIRROR="https://mirrors.aliyun.com/kubernetes"        # base url of k8s mirror
+K8S_PKG_REPO="https://packages.cloud.google.com"              # k8s package repo
+K8S_PKG_MIRROR="https://mirrors.aliyun.com/kubernetes"        # k8s package mirror
 K8S_REG_REPO="registry.k8s.io"                                # k8s registry repo
 K8S_REG_MIRROR="registry.aliyuncs.com/google_containers"      # k8s registry mirror
 
@@ -395,11 +395,11 @@ function check_mirror() {
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
-      msg "check whether we can access google cloud"
+      msg "check whether we can access k8s repo and pkgs"
       local target="$K8S_REG_REPO/pause:latest"
       if $CRI_CLIENT image pull $target >/dev/null 2>&1; then
         msg "$CRI_CLIENT image pull $target is OK"
-        target="$K8S_PKG_BASEURL"
+        target="$K8S_PKG_REPO"
         if curl -s -m 5 $target >/dev/null 2>&1; then
           msg "curl $target is OK"
           MIRROR=no
@@ -476,21 +476,36 @@ function install_k8s() {
 
   save_package_list "$packages_old"
   if [[ $dist == "ubuntu" ]]; then
+    local dist_rel="$(lsb_release -s -r)"
     local codename="xenial"  # the official doc use xenial for all
     local list="/etc/apt/sources.list.d/kubernetes.list"
-    local key="$K8S_PKG_BASEURL/apt/doc/apt-key.gpg"
-    local src="$K8S_PKG_BASEURL/apt"
+    local key="$K8S_PKG_REPO/apt/doc/apt-key.gpg"
+    local src="$K8S_PKG_REPO/apt"
     if [[ $NEED_MIRROR == "y" ]]; then
       key="$K8S_PKG_MIRROR/apt/doc/apt-key.gpg"
       src="$K8S_PKG_MIRROR/apt/"
     fi
 
     msg "add key from $key"
-    curl -s $key | $SUDO apt-key add -
-    msg "add $src to $list for $codename"
-    cat <<EOF | $SUDO tee $list
+    local since="22.04" # "apt-key add" is removed since 22.04
+    if [[ $(minimal_version $since $dist_rel) == $since ]]; then
+      local keydir="/etc/apt/keyrings"
+      local gpgkey="$keydir/kubernetes.gpg"
+      msg "deploy key to $gpgkey"
+      $SUDO install -m 0755 -d $keydir
+      curl -fsSL $key | $SUDO gpg --dearmor --yes -o $gpgkey
+      $SUDO chmod a+r $gpgkey
+      msg "add $src to $list for $codename"
+      cat <<EOF | $SUDO tee $list
+deb [signed-by=$gpgkey] $src kubernetes-$codename main
+EOF
+    else
+      curl -s $key | $SUDO apt-key add -
+      msg "add $src to $list for $codename"
+      cat <<EOF | $SUDO tee $list
 deb $src kubernetes-$codename main
 EOF
+    fi
 
     local pkgsss="$K8S_PKGS "
     local wanted="${pkgsss// /=$VERSION-00 }"
@@ -503,8 +518,8 @@ EOF
   elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
     local name="el7-$(uname -m)"
     local list="/etc/yum.repos.d/kubernetes.repo"
-    local src="$K8S_PKG_BASEURL/yum/repos"
-    local key="$K8S_PKG_BASEURL/yum/doc"
+    local src="$K8S_PKG_REPO/yum/repos"
+    local key="$K8S_PKG_REPO/yum/doc"
     if [[ $NEED_MIRROR == "y" ]]; then
       src="$K8S_PKG_MIRROR/yum/repos"
       key="$K8S_PKG_MIRROR/yum/doc"
