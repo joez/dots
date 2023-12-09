@@ -395,19 +395,19 @@ function check_mirror() {
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
-      msg "check whether we can access k8s repo and pkgs"
-      local target="$K8S_REG_REPO/pause:latest"
-      if $CRI_CLIENT image pull $target >/dev/null 2>&1; then
-        msg "$CRI_CLIENT image pull $target is OK"
-        target="$K8S_PKG_REPO"
-        if curl -s -m 5 $target >/dev/null 2>&1; then
-          msg "curl $target is OK"
+      msg "check if we can access k8s pkgs and images"
+      local target="$K8S_PKG_REPO"
+      if curl -s -m 5 $target >/dev/null 2>&1; then
+        msg "curl $target is OK"
+        target="$K8S_REG_REPO/pause:latest"
+        if $CRI_CLIENT image pull $target >/dev/null 2>&1; then
+          msg "$CRI_CLIENT image pull $target is OK"
           MIRROR=no
         else
-          msg "curl $target is FAILED"
+          msg "$CRI_CLIENT image pull $target is FAILED"
         fi
       else
-        msg "$CRI_CLIENT image pull $target is FAILED"
+        msg "curl $target is FAILED"
       fi
     fi
   fi
