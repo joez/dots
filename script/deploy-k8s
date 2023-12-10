@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.12.09
+# version: 23.12.10
 
 set -e
 
@@ -1092,7 +1092,7 @@ EOF
     # new name was added at v1.24.0 and the old one was removed at v1.25.0
     # try them all for better compatibility
     for n in master control-plane; do
-      kubectl taint nodes --all node-role.kubernetes.io/$n- || true
+      kubectl taint nodes --all node-role.kubernetes.io/$n- 2>/dev/null || true
     done
   fi
 
