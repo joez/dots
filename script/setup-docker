@@ -30,12 +30,12 @@ PORT_HTTPS="912"
 PROXY_HOST=""
 PROXY_PORT=""
 PROXY_SKIP="localhost,$HOSTNAME,istio-system.svc,$PRIVATE_CIDR"
-REPO_MIRROR="https://hub-mirror.c.163.com"
+REGISTRY_MIRROR="${REGISTRY_MIRROR:-https://hub-mirror.c.163.com}"
 UNINSTALL=n             # uninstall completely
 VERSION="latest"        # version to install
 
-BASE_URL="https://download.docker.com"
-BASE_URL_MIRROR="${BASE_URL_MIRROR:-https://mirrors.aliyun.com/docker-ce}"
+DOCKER_URL="https://download.docker.com"
+DOCKER_MIRROR="${DOCKER_MIRROR:-https://mirrors.aliyun.com/docker-ce}"
 PKGS_ESSENTIAL="docker-ce docker-ce-cli containerd.io"     # DO NOT change the last one
 PKGS_OPTIONAL="docker-buildx-plugin docker-compose-plugin"
 
@@ -64,7 +64,7 @@ Usage: $SELF [-M <mirror>] [-N <noproxy>] [-H <port>] [-S <port>] [-m <type>]
 
   Install Docker and configure it the easy way.
 
-  -M <mirror>:  Docker registry mirror, default: $REPO_MIRROR
+  -M <mirror>:  Docker registry mirror, default: $REGISTRY_MIRROR
   -N <noproxy>: no_proxy settings, default: $PROXY_SKIP
   -H <port>:    proxy port for http, default: $PORT_HTTP
   -S <port>:    proxy port for https, default: $PORT_HTTPS
@@ -76,6 +76,10 @@ Usage: $SELF [-M <mirror>] [-N <noproxy>] [-H <port>] [-S <port>] [-m <type>]
 
   <host>:       proxy host, "" to disable proxy, default: $PROXY_HOST
   <port>:       proxy port, override -HS options, default: $PROXY_PORT
+
+Environment variables:
+  DOCKER_MIRROR: mirror to install docker, default: $DOCKER_MIRROR
+  OFFLINE:       force into offline mode [y n], default: $OFFLINE
 
 Examples:
 
@@ -107,7 +111,7 @@ function main() {
   while getopts ":N:M:H:S:m:v:Unh" opt
   do
     case $opt in
-      M ) REPO_MIRROR=$OPTARG;;
+      M ) REGISTRY_MIRROR=$OPTARG;;
       N ) PROXY_SKIP=$OPTARG;;
       H ) PORT_HTTP=$OPTARG;;
       S ) PORT_HTTPS=$OPTARG;;
@@ -144,8 +148,8 @@ function main() {
     export no_proxy=
   fi
 
-  for v in CACHE DIST DOCKERC_CONFIG DOCKERD_CONFIG DRY_RUN MIRROR OFFLINE PORT_HTTP PORT_HTTPS \
-           PROXY_HOST PROXY_PORT PROXY_SKIP REPO_MIRROR SERVICE_CONFIG VERSION; do
+  for v in CACHE DIST DOCKERC_CONFIG DOCKERD_CONFIG DOCKER_MIRROR DRY_RUN MIRROR OFFLINE PORT_HTTP \
+	   PORT_HTTPS PROXY_HOST PROXY_PORT PROXY_SKIP REGISTRY_MIRROR SERVICE_CONFIG VERSION; do
     eval echo "$v: \${$v}"
   done
 
@@ -323,9 +327,9 @@ function install_from_cache() {
 function install_docker() {
   msg "install docker, version:$VERSION"
 
-  local base_url="$BASE_URL/linux"
+  local base_url="$DOCKER_URL/linux"
   if [[ $NEED_MIRROR == "y" ]]; then
-    base_url="$BASE_URL_MIRROR/linux"
+    base_url="$DOCKER_MIRROR/linux"
   fi
 
   if [[ $DIST == "openeuler" ]]; then
@@ -480,7 +484,7 @@ function ensure_uninstalled() {
     fi
   done
 
-  msg "images, containers and volumes arenâ€™t removed, do it by yourself:"
+  msg "images, containers and volumes aren't removed, do it by yourself:"
   cat <<EOF
 $SUDO rm -rf /var/lib/docker
 $SUDO rm -rf /var/lib/containerd
@@ -539,8 +543,8 @@ EOF
   msg "configure $DOCKERD_CONFIG"
   $SUDO mkdir -p $(dirname $DOCKERD_CONFIG)
   local mirrors=""
-  if [[ -n $REPO_MIRROR ]]; then
-    mirrors="\"registry-mirrors\": [\"$REPO_MIRROR\"],"
+  if [[ -n $REGISTRY_MIRROR ]]; then
+    mirrors="\"registry-mirrors\": [\"$REGISTRY_MIRROR\"],"
   fi
   cat <<EOF | $SUDO tee $DOCKERD_CONFIG
 {
