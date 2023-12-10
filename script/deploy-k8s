@@ -67,7 +67,7 @@ FLANNEL_BASEURL="https://github.com/flannel-io/flannel"
 LOCALPP_VERSION="${LOCALPP_VERSION:-0.0.24}"                  # local path provisioner version
 LOCALPP_BASEURL="https://github.com/rancher/local-path-provisioner"
 
-CRI_DOCKERD_VERSION="${CRI_DOCKERD_VERSION:-0.3.2}"           # cri-dockerd version
+CRI_DOCKERD_VERSION="${CRI_DOCKERD_VERSION:-0.3.8}"           # cri-dockerd version
 CRI_DOCKERD_BASEURL="https://github.com/Mirantis/cri-dockerd" # cri-dockerd repo url
 CRI_DOCKERD_SOCKET="unix:///var/run/cri-dockerd.sock"         # cri-dockerd socket path
 
@@ -404,7 +404,8 @@ function install_cri_dockerd_if_needed() {
     else
       msg "download into $dir"
       if [[ ! -e $dir/cri-dockerd ]]; then
-        local u="${url}/releases/download/v${ver}/cri-dockerd-${ver}.amd64.tgz"
+        local arch="$(uname -m | sed 's/x86_64/amd64/')"
+        local u="$url/releases/download/v$ver/cri-dockerd-$ver.$arch.tgz"
         msg "downloading $u"
         curl -sL $u | tar xz -C $dir --strip-components=1
       fi
