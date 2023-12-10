@@ -181,7 +181,7 @@ EOF
 }
 
 function current_version() {
-  local version="$VERSION"
+  local version=
   if [[ -n $(which kubeadm) ]]; then
     version="$(kubeadm version -o short)"
     version=${version#v}
@@ -190,7 +190,8 @@ function current_version() {
 }
 
 # adjust default version if already deployed
-VERSION="$(current_version)"
+CURRENT="$(current_version)"
+VERSION="${CURRENT:-$VERSION}"
 
 while getopts ":a:b:c:e:s:m:N:v:hCWnRrU" opt
 do
@@ -239,7 +240,7 @@ if [[ -n $SUDO ]]; then
   CRI_CLIENT="$SUDO $CRI_CLIENT"
 fi
 
-for v in ADDRESS BACKEND CRI_RUNTIME CRI_CLIENT DRY_RUN ENDPOINT HOST_IP MIRROR NODE \
+for v in ADDRESS BACKEND CRI_RUNTIME CRI_CLIENT CURRENT DRY_RUN ENDPOINT HOST_IP MIRROR NODE \
          NO_CLUSTER NO_WORKLOAD OFFLINE RESET SANS UNINSTALL VERSION
 do
   eval echo "$v: \${$v}"
@@ -334,6 +335,13 @@ function need_cri_dockerd() {
   if [[ $(minimal_version $since $VERSION) == $since ]]; then
     msg "the requested k8s version $VERSION is >= $since"
     NEED_CRI_DOCKERD=y
+
+    if [[ $(minimal_version $since $CURRENT) != $since ]]; then
+      err "there is a known issue with k8s version ($CURRENT), upgrade to version >= 1.24.0 first"
+      err "details in https://github.com/Mirantis/cri-dockerd/issues/167"
+      msg "uninstall current k8s with command \"$SELF -U\" first, and try again"
+      exit 1
+    fi
   fi
   msg "need cri-dockerd: $NEED_CRI_DOCKERD"
 }
@@ -621,10 +629,9 @@ function ensure_selinuxoff() {
 function ensure_installed() {
   msg "ensure k8s installed"
 
-  if [[ -n $(which kubeadm) ]]; then
-    local ver="$(current_version)"
-    msg "already installed, version: $ver"
-    if [[ $VERSION != $ver ]]; then
+  if [[ -n $CURRENT ]]; then
+    msg "already installed, version: $CURRENT"
+    if [[ $VERSION != $CURRENT ]]; then
       msg "the requested version ($VERSION) is different from the installed one"
       msg "we only support to switch control-plane version without reinstalling"
       msg "if you want to switch k8s version, reset cluster and delete k8s first"
