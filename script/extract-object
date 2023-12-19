@@ -1,0 +1,228 @@
+#!/usr/bin/env perl
+# author: joe.zheng
+
+use strict;
+
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+
+use Getopt::Long;
+use File::Basename;
+use File::Find;
+use File::Spec;
+use File::Path qw(make_path);
+
+use XML::Reader;
+use Image::Magick;
+
+use Parallel::ForkManager;
+
+use Benchmark;
+use Data::Dumper qw(Dumper);
+
+my $self    = basename($0);
+my $version = '23.12.18';
+
+my $help;
+my $outdir = 'object-images';
+my $nprocs = 10;
+my $DEBUG  = $ENV{DEBUG} // 1;
+
+sub usage {
+  print <<"EOF";
+Usage: $self [-h] [-o <out>] [-n <proc>] <dir>...
+  Extract objects from captured images with ROI info defined in xml.
+
+  -n <proc>:  number of parallel processes, default: $nprocs
+  -o <out>:   folder to store object images, default: $outdir
+  -h:         help message
+
+  <dir>...    folders to search for xml and captured images
+
+Prerequisites:
+
+  Install the dependencies by following commands (on Ubuntu):
+
+    sudo apt install imagemagick libimage-magick-perl \\
+         libxml-parser-perl libparallel-forkmanager-perl cpanminus 
+    sudo cpanm XML::Reader
+
+  Download UA-DETRAC dataset by following commands:
+
+    for f in test-data train-data Test-Annotations-XML Train-Annotations-XML; do
+      wget -c https://detrac-db.rit.albany.edu/Data/DETRAC-\$f.zip
+    done
+
+Version: $version
+EOF
+  exit;
+}
+
+my $D = Data::Dumper->new([])->Terse(1)->Deepcopy(1)->Indent(0)->Pair(':')->Sortkeys(0);
+
+sub str { $D->Values(\@_)->Dump }
+sub dbg { print STDOUT join("\n", @_) . "\n" if $DEBUG }
+sub msg { print STDOUT join("\n", @_) . "\n" }
+
+
+GetOptions("nproc|n=i" => \$nprocs, "out|o=s" => \$outdir, "help|h" => \$help,) or usage();
+
+usage() if $help || @ARGV < 1;
+
+my @dirs = @ARGV;
+
+msg <<"EOF";
+Start to extract object images:
+  search dir:  @dirs
+  output dir:  $outdir
+EOF
+
+my $db = {};
+my $fi = {};
+
+sub collect_stream_files {
+  return if /^\./;    # skip .*
+
+  if (/(.+?)\.xml$/) {
+    my $stream = $1;
+    @{$fi->{$stream}}{qw/xml set/} = ($File::Find::name, basename($File::Find::dir));
+  }
+  elsif (/\.(?:jpg|jpeg)$/) {
+    my $stream = basename($File::Find::dir);
+    push @{$fi->{$stream}{img}}, $File::Find::name;
+  }
+}
+
+my @times = (Benchmark->new);
+
+# search for xml and images files of steams
+find(\&collect_stream_files, @dirs);
+
+make_path($outdir);    # ensure output dir exists
+
+my $pm = Parallel::ForkManager->new($nprocs);
+while (my ($stream, $info) = each %{$fi}) {
+  msg "new task for stream: $stream";
+  $pm->start and next;
+
+  # child here to do the task
+  my $d = parse_xml($info->{xml});
+  extract_object($_, $d, $outdir) for @{$info->{img}};
+
+  $pm->finish;
+}
+$pm->wait_all_children;
+push @times, Benchmark->new;
+
+msg sprintf "done: %d streams", scalar(keys %{$fi});
+msg timestr(timediff($times[-1], $times[0]));
+
+=for comment
+
+# layout of the UA-DETRAC dataset
+Insight-MVT_Annotation_Train/MVI_20011/img00001.jpg
+DETRAC-Train-Annotations-XML/MVI_20011.xml
+Insight-MVT_Annotation_Test/MVI_39031/img00001.jpg
+DETRAC-Test-Annotations-XML/MVI_39031.xml
+
+# xml format of the annotation
+<sequence name="MVI_20011">
+   <sequence_attribute camera_state="unstable" sence_weather="sunny"/>
+   <ignored_region>
+      <box left="778.75" top="24.75" width="181.75" height="63.5"/>
+   </ignored_region>
+   <frame density="7" num="1">
+      <target_list>
+         <target id="1">
+            <box left="592.75" top="378.8" width="160.05" height="162.2"/>
+            <attribute orientation="18.488" speed="6.859" trajectory_length="5" truncation_ratio="0.1" vehicle_type="car"/>
+         </target>
+...
+      </target_list>
+   </frame>
+</sequence>
+
+=cut
+
+sub parse_xml {
+  my $file = shift or die "no xml file provided";
+
+  msg "parsing: $file";
+
+  # { name => '', frames => { 1 => { num => 1, targets => { 1 => { id => 1, type => 'car', box => {}, }, }, }, }, }
+  my $info = {};
+  my %path = (
+    stream => '/sequence',
+    frame  => '/sequence/frame',
+    target => '/sequence/frame/target_list/target',
+    box    => '/sequence/frame/target_list/target/box',
+    attr   => '/sequence/frame/target_list/target/attribute',
+  );
+  my ($frame, $target);
+
+  my $rdr = XML::Reader->new($file, {mode => 'attr-in-hash'});
+  while ($rdr->iterate) {
+    my $p = $rdr->path;
+    if ($rdr->is_start) {
+      my $a = $rdr->att_hash;
+      if ($p eq $path{stream}) {
+        $info->{name} = $a->{name};
+      }
+      elsif ($p eq $path{frame}) {
+        $frame = $a;
+      }
+      elsif ($p eq $path{target}) {
+        $target = $a;
+      }
+      elsif ($p eq $path{box}) {
+        $target->{box} = $a;
+      }
+      elsif ($p eq $path{attr}) {
+        $target->{type} = $a->{vehicle_type};
+      }
+    }
+    elsif ($rdr->is_end) {
+      if ($p eq $path{target}) {
+        $frame->{targets}{$target->{id}} = $target;
+      }
+      elsif ($p eq $path{frame}) {
+        $info->{frames}{$frame->{num}} = $frame;
+      }
+    }
+  }
+
+  return $info;
+}
+
+sub extract_object() {
+  my $file = shift or die "no image file provided\n";
+  my $db   = shift or die "no db provided\n";
+  my $out  = shift or die "no output dir provided\n";
+
+  # image file: Insight-MVT_Annotation_Test/MVI_39031/img00088.jpg
+  my ($name, $dirs, $ext) = fileparse($file, qr/\.[^.]*/);
+  my $stream  = basename($dirs);
+  my $frame   = int(($name =~ /(\d+)$/)[0]);
+  my $targets = $db->{frames}{$frame}{targets};
+
+  my $image = Image::Magick->new;
+  for my $r ($image->Read($file)) {
+    warn $r if $r;
+  }
+
+  msg "processing: $file";
+  for my $id (keys %{$targets}) {
+    my ($b, $t) = @{$targets->{$id}}{qw/box type/};
+    my $geometry = sprintf "%dx%d+%d+%d", @{$b}{qw/width height left top/};
+    my $oname    = sprintf '%s-%05d-%05d-%s%s', $stream, $frame, $id, $t, $ext;
+    my $ofile    = File::Spec->catfile($out, $oname);
+    my $img      = $image->clone();
+    for my $r ($img->Crop($geometry)) {
+      warn $r if $r;
+    }
+    for my $r ($img->Write($ofile)) {
+      warn $r if $r;
+    }
+    dbg sprintf('%s %05d %05d %15s %s', $stream, $frame, $id, $geometry, $ofile);
+  }
+}
