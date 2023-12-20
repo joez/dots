@@ -12,16 +12,11 @@ use File::Find;
 use File::Spec;
 use File::Path qw(make_path);
 
-use XML::Reader;
-use Image::Magick;
-
-use Parallel::ForkManager;
-
 use Benchmark;
 use Data::Dumper qw(Dumper);
 
 my $self    = basename($0);
-my $version = '23.12.18';
+my $version = '23.12.21';
 
 my $help;
 my $outdir = 'object-images';
@@ -68,6 +63,12 @@ sub msg { print STDOUT join("\n", @_) . "\n" }
 GetOptions("nproc|n=i" => \$nprocs, "out|o=s" => \$outdir, "help|h" => \$help,) or usage();
 
 usage() if $help || @ARGV < 1;
+
+eval q(
+  use XML::Reader;
+  use Image::Magick;
+  use Parallel::ForkManager;
+) or die;
 
 my @dirs = @ARGV;
 
