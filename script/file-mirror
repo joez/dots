@@ -23,7 +23,6 @@ fi
 
 PREFIX='> '
 DELIMITER='^'
-QUIET='-q'
 
 function usage() {
   cat <<EOF
@@ -109,7 +108,7 @@ function smart_download() {
       for c in "${choices[@]}"; do
         msg "trying: $c"
         if [[ $DRY_RUN != 'y' ]]; then
-          if wget $QUIET -c -t 3 -T 5 -P $tmp $c; then
+          if wget -c -t 3 -T 5 -P $tmp $c; then
             ok='y'
             break
           fi
@@ -120,7 +119,7 @@ function smart_download() {
         exit 1
       fi
     else
-      $RUN wget $QUIET -c -P $tmp $i
+      $RUN wget -c -P $tmp $i
     fi
     $RUN ln -f $downloading $downloaded
     msg "OK: $downloaded"
