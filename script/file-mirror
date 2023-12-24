@@ -8,8 +8,8 @@ SELF="$(basename $0)"
 SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 
 DIR_HOME="${DIR_HOME:-$(dirname $0)/files}"
-DIR_FILE="$DIR_HOME/file"
-SVC_CONF="$DIR_HOME/file.conf"
+DIR_REPO="$DIR_HOME/repo"
+CFG_REPO="$DIR_HOME/repo.conf"
 DIR_DOWNLOAD="$DIR_HOME/.download"
 
 SVC_NAME="${SVC_NAME:-file}" # container name
@@ -30,6 +30,15 @@ function usage() {
 Usage: $SELF [command] [args]
   Download files and serve a local file server
 
+  The downloading files will be saved at a temporary folder ($DIR_DOWNLOAD),
+  a hard link will be created in the final folder ($DIR_REPO) if the download
+  is successful, otherwise it will exit, and it supports continue download for
+  the next run.
+
+  It can support to download file from mutiple sources, try one by one until
+  any one is successful. You can append multiple sources in the url separated
+  by a delimiter ($DELIMITER)
+
 Commands:
   pull [<url>...]  download the files, read from stdin if no url
   get <url>        download first and get the local file path
@@ -42,6 +51,25 @@ Environment variables:
   SVC_PORT:    port number to listen: default: $SVC_PORT
 
 Examples:
+
+  # Print out how it will be processed
+  DRY_RUN=y $SELF pull https://iffi.me/{demo-bot,file-mirror}
+
+  # Download files from remote server
+  $SELF pull https://iffi.me/{demo-bot,file-mirror}
+
+  # Get the local file path
+  $SELF get https://iffi.me/demo-bot
+
+  # Start the local file server
+  $SELF serve
+
+  # Download file from multiple sources
+  f=go1.16.linux-amd64.tar.gz && \\
+  $SELF pull https://dl.google.com/go/\$f^https://https://golang.google.cn/dl/\$f
+
+  # Download files with a file list
+  cat file-list.txt | $SELF pull
 
 Version: $SELF_VERSION
 EOF
@@ -60,11 +88,11 @@ function has() {
 }
 
 function smart_download() {
-  local dir="$DIR_FILE"
+  local dir="$DIR_REPO"
   local tmp="$DIR_DOWNLOAD"
 
   for i in "$@"; do
-    msg "to download: $dir <- $i"
+    msg "download: $i"
     local name="$(basename $i)"
     local downloading="$tmp/$name"
     local downloaded="$dir/$name"
@@ -76,10 +104,10 @@ function smart_download() {
     fi
 
     if has "$i" $DELIMITER; then
-      msg "has alternative source"
+      msg "has multiple sources"
       IFS=$DELIMITER read -a choices <<< "$i"
       for c in "${choices[@]}"; do
-        msg "trying $c"
+        msg "trying: $c"
         if [[ $DRY_RUN != 'y' ]]; then
           if wget $QUIET -c -t 3 -T 5 -P $tmp $c; then
             ok='y'
@@ -88,7 +116,7 @@ function smart_download() {
         fi
       done
       if [[ $ok != 'y' && $DRY_RUN != 'y' ]]; then
-        err "all are failed"
+        err "all failed"
         exit 1
       fi
     else
@@ -106,7 +134,7 @@ server {
     listen       8080;
     server_name  localhost;
     location / {
-        root /file;
+        root /repo;
         autoindex on;
         autoindex_exact_size off;
         autoindex_localtime on;
@@ -124,7 +152,7 @@ else
   shift
 fi
 
-$RUN mkdir -p $DIR_HOME $DIR_FILE
+$RUN mkdir -p $DIR_HOME $DIR_REPO
 
 if [[ "$cmd" == "pull" ]]; then
   if [[ -t 0 ]]; then
@@ -138,7 +166,7 @@ if [[ "$cmd" == "pull" ]]; then
 elif [[ "$cmd" == "get" ]]; then
   [[ -z "$1" ]] && exit 1
   smart_download "$1" >&2
-  downloaded="$DIR_FILE/$(basename $1)"
+  downloaded="$DIR_REPO/$(basename $1)"
   [[ -f "$downloaded" ]] && echo "$downloaded"
   exit
 elif [[ "$cmd" == "serve" ]]; then
@@ -147,9 +175,9 @@ elif [[ "$cmd" == "serve" ]]; then
     SUDO="sudo"
   fi
 
-  if [[ ! -f $SVC_CONF ]]; then
-     msg "create $SVC_CONF"
-     $RUN create_svc_conf $SVC_CONF
+  if [[ ! -f $CFG_REPO ]]; then
+     msg "create $CFG_REPO"
+     $RUN create_svc_conf $CFG_REPO
   fi
   if $SUDO docker container inspect -f '{{.ID}}' $SVC_NAME >/dev/null; then
     msg "stop and delete the old container: $SVC_NAME"
@@ -157,8 +185,8 @@ elif [[ "$cmd" == "serve" ]]; then
   fi
   msg "create container: $SVC_NAME"
   $RUN $SUDO docker create --name $SVC_NAME \
-    -v $(realpath $DIR_FILE):/file \
-    -v $(realpath $SVC_CONF):/etc/nginx/conf.d/file.conf \
+    -v $(realpath $DIR_REPO):/repo \
+    -v $(realpath $CFG_REPO):/etc/nginx/conf.d/repo.conf \
     -p $SVC_PORT:8080 --restart unless-stopped \
     nginx:1.23.4-alpine
   msg "start container: $SVC_NAME"
