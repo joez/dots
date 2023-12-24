@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 23.12.24
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+DIR_HOME="${DIR_HOME:-$(dirname $0)/files}"
+DIR_FILE="$DIR_HOME/file"
+SVC_CONF="$DIR_HOME/file.conf"
+DIR_DOWNLOAD="$DIR_HOME/.download"
+
+SVC_NAME="${SVC_NAME:-file}" # container name
+SVC_PORT="${SVC_PORT:-9070}" # port number
+
+DRY_RUN="${DRY_RUN:-n}"
+RUN='' # command prefix for dry run
+if [[ $DRY_RUN == 'y' ]]; then
+  RUN='echo'
+fi
+
+PREFIX='> '
+DELIMITER='^'
+QUIET='-q'
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [command] [args]
+  Download files and serve a local file server
+
+Commands:
+  pull [<url>...]  download the files, read from stdin if no url
+  get <url>        download first and get the local file path
+  serve            start the local file server
+
+Environment variables:
+  DRY_RUN:     print out information only, if it is "y", default: $DRY_RUN
+  DIR_HOME:    root folder for this app, default: $DIR_HOME
+  SVC_NAME:    container name to use: default: $SVC_NAME
+  SVC_PORT:    port number to listen: default: $SVC_PORT
+
+Examples:
+
+Version: $SELF_VERSION
+EOF
+}
+
+function msg {
+  echo "$PREFIX$@"
+}
+
+function err {
+  echo "$PREFIX$@" >&2
+}
+
+function has() {
+  [[ -z "${1##*$2*}" ]] && [[ -z "$2" || -n "$1" ]]
+}
+
+function smart_download() {
+  local dir="$DIR_FILE"
+  local tmp="$DIR_DOWNLOAD"
+
+  for i in "$@"; do
+    msg "to download: $dir <- $i"
+    local name="$(basename $i)"
+    local downloading="$tmp/$name"
+    local downloaded="$dir/$name"
+
+    if [[ -f "$downloaded" ]]; then
+      msg "already downloaded"
+      msg "OK: $downloaded"
+      break
+    fi
+
+    if has "$i" $DELIMITER; then
+      msg "has alternative source"
+      IFS=$DELIMITER read -a choices <<< "$i"
+      for c in "${choices[@]}"; do
+        msg "trying $c"
+        if [[ $DRY_RUN != 'y' ]]; then
+          if wget $QUIET -c -t 3 -T 5 -P $tmp $c; then
+            ok='y'
+            break
+          fi
+        fi
+      done
+      if [[ $ok != 'y' && $DRY_RUN != 'y' ]]; then
+        err "all are failed"
+        exit 1
+      fi
+    else
+      $RUN wget $QUIET -c -P $tmp $i
+    fi
+    $RUN ln -f $downloading $downloaded
+    msg "OK: $downloaded"
+  done
+}
+
+function create_svc_conf {
+  mkdir -p "$(dirname $1)"
+  cat <<'EOF' > $1
+server {
+    listen       8080;
+    server_name  localhost;
+    location / {
+        root /file;
+        autoindex on;
+        autoindex_exact_size off;
+        autoindex_localtime on;
+        charset utf-8;
+    }
+}
+EOF
+
+}
+
+if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" || "$1" == "help" ]]; then
+  usage && exit
+else
+  cmd="$1"
+  shift
+fi
+
+$RUN mkdir -p $DIR_HOME $DIR_FILE
+
+if [[ "$cmd" == "pull" ]]; then
+  if [[ -t 0 ]]; then
+    # pass args into stdin
+    exec < <(printf '%s\n' "$@")
+  fi
+  while IFS= read -r url; do
+    msg "processing $url"
+    smart_download "$url"
+  done
+elif [[ "$cmd" == "get" ]]; then
+  [[ -z "$1" ]] && exit 1
+  smart_download "$1" >&2
+  downloaded="$DIR_FILE/$(basename $1)"
+  [[ -f "$downloaded" ]] && echo "$downloaded"
+  exit
+elif [[ "$cmd" == "serve" ]]; then
+  SUDO=""
+  if [[ $(id -u) != "0" ]]; then
+    SUDO="sudo"
+  fi
+
+  if [[ ! -f $SVC_CONF ]]; then
+     msg "create $SVC_CONF"
+     $RUN create_svc_conf $SVC_CONF
+  fi
+  if $SUDO docker container inspect -f '{{.ID}}' $SVC_NAME >/dev/null; then
+    msg "stop and delete the old container: $SVC_NAME"
+    $RUN $SUDO docker rm -f $SVC_NAME
+  fi
+  msg "create container: $SVC_NAME"
+  $RUN $SUDO docker create --name $SVC_NAME \
+    -v $(realpath $DIR_FILE):/file \
+    -v $(realpath $SVC_CONF):/etc/nginx/conf.d/file.conf \
+    -p $SVC_PORT:8080 --restart unless-stopped \
+    nginx:1.23.4-alpine
+  msg "start container: $SVC_NAME"
+  $RUN $SUDO docker start $SVC_NAME
+
+  hostip=$(ip route get 1 | head -1 | awk '{print $7}')
+  baseurl="http://$hostip:$SVC_PORT"
+  cat <<EOF
+# check the local repo
+  no_proxy='*' curl $baseurl
+EOF
+else
+  err "not supported cmd: $cmd"
+  exit 1
+fi
+
+msg "done"
