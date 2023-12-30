@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.12.24
+# version: 23.12.30
 
 set -e
 
@@ -49,6 +49,17 @@ Environment variables:
   SVC_NAME:    container name to use: default: $SVC_NAME
   SVC_PORT:    port number to listen: default: $SVC_PORT
 
+HTTP proxy:
+
+  It can support to be as an HTTP proxy, just request it with a "/proxy" prefix
+  for the target url, e.g., assume it listens on "http://host:port", and the
+  target url is "https://target/path/file", you can request it as following:
+
+    curl -L http://host:port/proxy/https://target/path/file
+
+  It will try to find file locally first, if not exist, requests remote server
+  for the target url and respond to the client just like an HTTP proxy
+
 Examples:
 
   # Print out how it will be processed
@@ -69,6 +80,10 @@ Examples:
 
   # Download files with a file list
   cat file-list.txt | $SELF pull
+
+  # Get url through $SELF as a HTTP proxy
+  target=https://github.com/joez/ptk/raw/master/Changes
+  curl -L localhost:$SVC_PORT/proxy/\$target
 
 Version: $SELF_VERSION
 EOF
@@ -132,12 +147,29 @@ function create_svc_conf {
 server {
     listen       8080;
     server_name  localhost;
+    root         /repo;
+
+    # to make it easy for /proxy/http://host/*
+    # otherwise the http:// will become http:/
+    merge_slashes off;
+
     location / {
-        root /repo;
         autoindex on;
         autoindex_exact_size off;
         autoindex_localtime on;
         charset utf-8;
+    }
+
+    # try local file first, and then the original server
+    # e.g. /proxy/http://target/path
+    # try /path first, then request http://target/path
+    location /proxy/ {
+        rewrite ^/proxy/(.+(/[^/]+))$ $1 break;
+        try_files $2 @proxy;
+    }
+    location @proxy {
+        resolver 8.8.8.8;
+        proxy_pass $uri;
     }
 }
 EOF
@@ -191,11 +223,9 @@ elif [[ "$cmd" == "serve" ]]; then
   msg "start container: $SVC_NAME"
   $RUN $SUDO docker start $SVC_NAME
 
-  hostip=$(ip route get 1 | head -1 | awk '{print $7}')
-  baseurl="http://$hostip:$SVC_PORT"
   cat <<EOF
 # check the local repo
-  no_proxy='*' curl $baseurl
+  no_proxy='*' curl localhost:$SVC_PORT
 EOF
 else
   err "not supported cmd: $cmd"
