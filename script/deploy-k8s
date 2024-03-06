@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.12.11
+# version: 24.03.05
 
 set -e
 
@@ -73,7 +73,7 @@ CRI_DOCKERD_SOCKET="unix:///var/run/cri-dockerd.sock"         # cri-dockerd sock
 
 CRI_CONTAINERD_SOCKET="unix:///run/containerd/containerd.sock" # containerd socket path
 
-K8S_PKG_REPO="https://packages.cloud.google.com"              # k8s package repo
+K8S_PKG_REPO="https://pkgs.k8s.io/core:/stable:"              # k8s package repo
 K8S_PKG_MIRROR="https://mirrors.aliyun.com/kubernetes"        # k8s package mirror
 K8S_REG_REPO="registry.k8s.io"                                # k8s registry repo
 K8S_REG_MIRROR="registry.aliyuncs.com/google_containers"      # k8s registry mirror
@@ -104,7 +104,7 @@ Usage: $SELF [-a <addr>] [-b <type>] [-c <cri>] [-e <addr>] [-m <type>]
   -s <sans>: API server certificate SANs separated by ",", default: $SANS
   -m <type>: mirror option [$MIRRORS], default: $MIRROR
   -N <name>: set node name, instead of the actual hostname, default: "$NODE"
-  -v <ver>:  k8s version, default: $VERSION
+  -v <ver>:  k8s version, in format MAJOR.MINOR.PATCH, default: $VERSION
   -r:        reset k8s cluster first, default: $RESET
   -R:        reset k8s cluster and stop, same as -rC
   -U:        reset cluster and uninstall components, default: $UNINSTALL
@@ -218,7 +218,13 @@ do
         fi
         ;;
     N ) NODE=$OPTARG;;
-    v ) VERSION=${OPTARG#v};;
+    v ) VERSION=${OPTARG#v}
+       dots="${VERSION//[^.]}"
+       if [[ ${#dots} != 2 ]]; then
+         echo "invalid version: $VERSION"
+         usage && exit 1
+       fi
+       ;;
     r ) RESET=y;;
     R ) RESET=y && NO_CLUSTER=y;;
     U ) RESET=y && NO_CLUSTER=y && UNINSTALL=y;;
@@ -451,6 +457,14 @@ function check_mirror() {
       fi
     fi
   fi
+
+  local since="1.24.0" # official repo only has k8s >= 1.24
+  if [[ $(minimal_version $since $VERSION) != $since ]]; then
+    msg "request legacy version $VERSION, only available in the mirror"
+    msg "use the mirror forcibly"
+    MIRROR=yes
+  fi
+
   if [[ $MIRROR == "yes" ]]; then
     NEED_MIRROR=y
   fi
@@ -516,50 +530,54 @@ function install_k8s() {
 
   save_package_list "$packages_old"
   if [[ $dist == "ubuntu" ]]; then
-    local dist_rel="$(lsb_release -s -r)"
-    local codename="xenial"  # the official doc use xenial for all
+    local version="v${VERSION%.*}"
+    local keydir="/etc/apt/keyrings"
+    local gpgkey="$keydir/kubernetes-apt-keyring.gpg"
     local list="/etc/apt/sources.list.d/kubernetes.list"
-    local key="$K8S_PKG_REPO/apt/doc/apt-key.gpg"
-    local src="$K8S_PKG_REPO/apt"
+    local key="$K8S_PKG_REPO/$version/deb/Release.key"
+    local src="$K8S_PKG_REPO/$version/deb/ /"
+
     if [[ $NEED_MIRROR == "y" ]]; then
       key="$K8S_PKG_MIRROR/apt/doc/apt-key.gpg"
-      src="$K8S_PKG_MIRROR/apt/"
+      src="$K8S_PKG_MIRROR/apt/ kubernetes-xenial main"
     fi
 
-    msg "add key from $key"
-    local since="22.04" # "apt-key add" is removed since 22.04
-    if [[ $(minimal_version $since $dist_rel) == $since ]]; then
-      local keydir="/etc/apt/keyrings"
-      local gpgkey="$keydir/kubernetes.gpg"
-      msg "deploy key to $gpgkey"
-      $SUDO install -m 0755 -d $keydir
-      curl -fsSL $key | $SUDO gpg --dearmor --yes -o $gpgkey
-      $SUDO chmod a+r $gpgkey
-      msg "add $src to $list for $codename"
-      cat <<EOF | $SUDO tee $list
-deb [signed-by=$gpgkey] $src kubernetes-$codename main
+    msg "add gpg key from $key"
+    $SUDO install -m 0755 -d $keydir
+    curl -fsSL $key | $SUDO gpg --dearmor --yes -o $gpgkey
+    $SUDO chmod a+r $gpgkey
+
+    msg "add repo source to $list"
+    cat <<EOF | $SUDO tee $list
+deb [signed-by=$gpgkey] $src
 EOF
+
+    msg "search packages for version $VERSION"
+    $SUDO apt update
+    local allver="$(apt-cache madison kubeadm | awk '{ print $3 }')"
+    local pkgver="$(echo "$allver" | grep "$VERSION-" | head -n1)"
+    if [[ -z $pkgver ]]; then
+      msg "available versions:"
+      echo "$(echo $allver | fold -s)"
+      err "$VERSION not found"
+      exit 1
     else
-      curl -s $key | $SUDO apt-key add -
-      msg "add $src to $list for $codename"
-      cat <<EOF | $SUDO tee $list
-deb $src kubernetes-$codename main
-EOF
+      msg "found version $pkgver"
+      local pkgsss="$K8S_PKGS " # keep the last space
+      local wanted="${pkgsss// /=$pkgver }"
+      msg "install packages: $wanted"
+      # use apt-get instead of apt to keep the downloaded packages
+      $SUDO apt-get install -y $wanted
+      msg "no auto update for $K8S_PKGS"
+      $SUDO apt-mark hold $K8S_PKGS
     fi
-
-    local pkgsss="$K8S_PKGS "
-    local wanted="${pkgsss// /=$VERSION-00 }"
-    msg "apt update and install: $wanted"
-    # use apt-get instead of apt to keep the downloaded packages
-    $SUDO apt update && $SUDO apt-get install -y $wanted
-    msg "no auto update for $K8S_PKGS"
-    $SUDO apt-mark hold $K8S_PKGS
 
   elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
     local name="el7-$(uname -m)"
     local list="/etc/yum.repos.d/kubernetes.repo"
     local src="$K8S_PKG_REPO/yum/repos"
     local key="$K8S_PKG_REPO/yum/doc"
+
     if [[ $NEED_MIRROR == "y" ]]; then
       src="$K8S_PKG_MIRROR/yum/repos"
       key="$K8S_PKG_MIRROR/yum/doc"
