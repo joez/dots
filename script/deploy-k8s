@@ -525,12 +525,12 @@ function install_k8s() {
     return
   fi
 
+  local version="v${VERSION%.*}" # major.minor
   local packages_old="$CACHE_RUN/packages-old.txt"
   local packages_new="$CACHE_RUN/packages-new.txt"
 
   save_package_list "$packages_old"
   if [[ $dist == "ubuntu" ]]; then
-    local version="v${VERSION%.*}"
     local keydir="/etc/apt/keyrings"
     local gpgkey="$keydir/kubernetes-apt-keyring.gpg"
     local list="/etc/apt/sources.list.d/kubernetes.list"
@@ -573,28 +573,29 @@ EOF
     fi
 
   elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
-    local name="el7-$(uname -m)"
     local list="/etc/yum.repos.d/kubernetes.repo"
-    local src="$K8S_PKG_REPO/yum/repos"
-    local key="$K8S_PKG_REPO/yum/doc"
+    local key="$K8S_PKG_REPO/$version/rpm/repodata/repomd.xml.key"
+    local src="$K8S_PKG_REPO/$version/rpm"
 
     if [[ $NEED_MIRROR == "y" ]]; then
-      src="$K8S_PKG_MIRROR/yum/repos"
-      key="$K8S_PKG_MIRROR/yum/doc"
+      local name="el7-$(uname -m)"
+      local base="$K8S_PKG_MIRROR/yum/doc"
+      key="$base/yum-key.gpg $base/rpm-package-key.gpg"
+      src="$K8S_PKG_MIRROR/yum/repos/kubernetes-$name"
     fi
 
-    msg "add $src to $list for $name"
+    msg "add $src to $list"
     # repo_gpgcheck is disabled for centos7
     # details in https://github.com/kubernetes/kubernetes/issues/100757
 cat <<EOF | $SUDO tee $list
 [kubernetes]
 name=Kubernetes
-baseurl=$src/kubernetes-$name
+baseurl=$src
 enabled=1
 gpgcheck=1
 repo_gpgcheck=0
-gpgkey=$key/yum-key.gpg $key/rpm-package-key.gpg
-exclude=kubelet kubeadm kubectl
+gpgkey=$key
+exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
 EOF
 
     msg "enable yum cache"
