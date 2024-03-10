@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.05
+# version: 24.03.10
 
 set -e
 
@@ -766,7 +766,7 @@ function ensure_workdir() {
 cat <<'EOFOF' > $CACHE_IMAGE
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.10.14
+# version: 24.03.10
 
 set -e
 
@@ -797,10 +797,16 @@ function usage() {
 Usage: $SELF {save | load} [<name>...]
   Save or load container images
 
-  <name>: image name in the format repo:tag, e.g. nginx:latest
+  <name>: image name, in the format "repo:tag" for "save", e.g. nginx:latest,
+          or "name[.tar.gz]" for "load", e.g. nginx:latest or nginx-latest.tar.gz
 
-  If no image name is provided, all available container images will be used,
-  if both image names and IMAGE_LIST are provided, they will be merged.
+  If no image name is provided, it will try to read from STDIN first, otherwise
+  all the cached container images will be used for "save", and all the saved
+  image files under DIR_IMAGES will be used for "load".
+
+  If both image names and IMAGE_LIST are provided, they will be merged.
+
+  Duplicated image names will be removed.
 
 Environment variables:
   DRY_RUN:     print out information only if it is "y"
@@ -880,9 +886,8 @@ fi
 msg "$cmd images"
 mkdir -p $DIR_IMAGES # all the files are stored in this dir
 
-if [[ -n "$IMAGE_LIST" ]]; then
-  images="$(read_image_list $IMAGE_LIST)"
-else
+if [[ -t 0 ]]; then
+  # stdin from terminal and no args are provided
   if (( $# < 1 )); then
     if [[ "$cmd" == "save" ]]; then
       images="$(eval $CMD_LIST)"
@@ -890,12 +895,21 @@ else
       images="$(cd $DIR_IMAGES && find . -type f -name '*tar.gz')"
     fi
   fi
+else
+  # stdin from pipe or redirection
+  images="$(cat)"
+fi
+
+# merge from image list file if provided
+if [[ -n "$IMAGE_LIST" ]]; then
+  images="$images $(read_image_list $IMAGE_LIST)"
 fi
 
 msg "enter directory: $DIR_IMAGES"
 cd $DIR_IMAGES
 
-for i in $images $@; do
+# merge, sort and remove duplicated ones
+for i in $(printf "%s\n" $images $@ | sort | uniq); do
   msg "processing $i"
   if [[ -n "$RE_WANTED" && ! $i =~ $RE_WANTED ]]; then
     msg "not wanted $i" && continue
