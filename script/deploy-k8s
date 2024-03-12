@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.10
+# version: 24.03.12
 
 set -e
 
@@ -59,7 +59,8 @@ CRI_RUNTIME="${CRI_RUNTIME:-$DEF_RUNTIME}"  # CRI runtime to use
 
 CRI_CLIENT="docker"   # CRI client, such as docker, ctr
 
-MIRROR_URL="${MIRROR_URL:-https://ghps.cc}"
+GITHUB_RAW="https://raw.githubusercontent.com"                # github raw content base url
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"             # mirror to use for github
 
 FLANNEL_VERSION="${FLANNEL_VERSION:-0.23.0}"                  # flannel version
 FLANNEL_BASEURL="https://github.com/flannel-io/flannel"
@@ -368,10 +369,13 @@ function mirror_url() {
 
   if [[ -z "$MIRROR_URL_IS_OK" ]]; then
     MIRROR_URL_IS_OK="n" # only one chance
-    if curl -s -m 5 $MIRROR_URL >/dev/null 2>&1; then
-      MIRROR_URL_IS_OK="y"
-    else
-      err "failed to access mirror ($MIRROR_URL)"
+    # check if we do need mirror
+    if ! curl -s -m 5 $GITHUB_RAW >/dev/null 2>&1; then
+      if curl -s -m 5 $MIRROR_URL >/dev/null 2>&1; then
+        MIRROR_URL_IS_OK="y"
+      else
+        err "failed to access mirror ($MIRROR_URL)"
+      fi
     fi
   fi
   if [[ $NEED_MIRROR == "y" ]] && [[ $MIRROR_URL_IS_OK == "y" ]]; then
