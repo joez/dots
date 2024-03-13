@@ -34,12 +34,10 @@ REGISTRY_MIRROR="${REGISTRY_MIRROR:-}"
 UNINSTALL=n             # uninstall completely
 VERSION="latest"        # version to install
 
-DOCKER_URL="https://download.docker.com"
+DOCKER_REPO="https://download.docker.com"
 DOCKER_MIRROR="${DOCKER_MIRROR:-https://mirrors.aliyun.com/docker-ce}"
 PKGS_ESSENTIAL="docker-ce docker-ce-cli containerd.io"     # DO NOT change the last one
 PKGS_OPTIONAL="docker-buildx-plugin docker-compose-plugin"
-
-GCLOUD_TEST_URL="https://packages.cloud.google.com"        # google cloud url for test
 
 CACHE="cache"
 CACHE_PACKAGES="$CACHE/packages"
@@ -238,8 +236,8 @@ function check_mirror() {
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
-      msg "check whether we can access google cloud"
-      local target="$GCLOUD_TEST_URL"
+      msg "check whether we can access docker repo"
+      local target="$DOCKER_REPO"
       if curl -s -m 5 $target >/dev/null 2>&1; then
         msg "curl $target is OK"
         MIRROR=no
@@ -327,7 +325,7 @@ function install_from_cache() {
 function install_docker() {
   msg "install docker, version:$VERSION"
 
-  local base_url="$DOCKER_URL/linux"
+  local base_url="$DOCKER_REPO/linux"
   if [[ $NEED_MIRROR == "y" ]]; then
     base_url="$DOCKER_MIRROR/linux"
   fi
