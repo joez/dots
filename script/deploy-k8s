@@ -319,7 +319,7 @@ function check_prerequisites() {
 function check_network() {
   msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
-    if ! curl -s -m 3 -I example.com >/dev/null; then
+    if ! access_ok example.com; then
       msg "can't access external network"
       OFFLINE="y"
     else
@@ -364,13 +364,17 @@ function ensure_cri_dockerd_uninstalled() {
   fi
 }
 
+function access_ok() {
+   curl -IL -f -s -m 5 $1 >/dev/null 2>&1
+}
+
 function mirror_url() {
   local origin="${1:?argument missing}"
 
   if [[ -z "$USE_MIRROR" ]]; then
     USE_MIRROR="n" # only one chance to check
-    if ! curl -s -m 5 $GITHUB_RAW >/dev/null 2>&1; then
-      if curl -s -m 5 $MIRROR_URL >/dev/null 2>&1; then
+    if ! access_ok $GITHUB_RAW; then
+      if access_ok $MIRROR_URL; then
         USE_MIRROR="y"
       else
         err "failed to access mirror ($MIRROR_URL)"
@@ -447,7 +451,7 @@ function check_mirror() {
     else
       msg "check if we can access k8s pkgs and images"
       local target="$K8S_PKG_REPO"
-      if curl -s -m 5 $target >/dev/null 2>&1; then
+      if access_ok $target; then
         msg "curl $target is OK"
         target="$K8S_REG_REPO/pause:latest"
         if $CRI_CLIENT image pull $target >/dev/null 2>&1; then
