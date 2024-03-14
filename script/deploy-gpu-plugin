@@ -22,8 +22,8 @@ UNINSTALL=n           # reset the deployment and uninstall components
 OFFLINE=${OFFLINE:-n} # no external network
 
 REPO_URL="https://github.com/intel/intel-device-plugins-for-kubernetes"
-MIRROR_URL="${MIRROR_URL:-https://ghps.cc}"
-GCLOUD_URL="https://packages.cloud.google.com"
+GITHUB_RAW="https://raw.githubusercontent.com"                # github raw content base url
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"             # mirror to use for github
 
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
 TIMEOUT="300s"
@@ -150,10 +150,7 @@ function main() {
 
   mkdir -p $package_dir $manifest_dir
 
-  local base_url="$REPO_URL"
-  if [[ $NEED_MIRROR == "y" ]]; then
-    base_url="$MIRROR_URL/$REPO_URL"
-  fi
+  local base_url="$(mirror_url $REPO_URL)"
 
   msg "download intel-device-plugin"
   if [[ ! -e "$package_path" ]]; then
@@ -224,10 +221,14 @@ function check_prerequisites() {
   fi
 }
 
+function access_ok() {
+   curl -IL -f -s -m 5 $1 >/dev/null 2>&1
+}
+
 function check_network() {
   msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
-    if ! curl -s -m 3 -I example.com >/dev/null; then
+    if ! access_ok example.com; then
       msg "can't access external network"
       OFFLINE="y"
     fi
@@ -235,17 +236,17 @@ function check_network() {
   msg "offline mode: $OFFLINE"
 }
 
-NEED_MIRROR=n
+USE_MIRROR=n
 function check_mirror() {
-  msg "is mirror needed"
+  msg "use mirror or not"
   if [[ $MIRROR == "auto" ]]; then
     MIRROR=yes # default as needed
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
-      msg "check whether we can access google cloud"
-      local target="$GCLOUD_URL"
-      if curl -s -m 5 $target >/dev/null 2>&1; then
+      msg "check whether we can access github"
+      local target="$GITHUB_RAW"
+      if access_ok $target; then
         msg "curl $target is OK"
         MIRROR=no
       else
@@ -254,9 +255,24 @@ function check_mirror() {
     fi
   fi
   if [[ $MIRROR == "yes" ]]; then
-    NEED_MIRROR=y
+    msg "mirror is needed"
+    if access_ok $MIRROR_URL; then
+      USE_MIRROR="y"
+    else
+      err "failed to access mirror ($MIRROR_URL)"
+    fi
   fi
-  msg "need mirror: $NEED_MIRROR"
+  msg "use mirror: $USE_MIRROR"
+}
+
+function mirror_url() {
+  local origin="${1:?argument missing}"
+
+  if [[ $USE_MIRROR = "y" ]]; then
+    echo -n "$MIRROR_URL/$url"
+  else
+    echo -n "$origin"
+  fi
 }
 
 function ensure_workdir() {
