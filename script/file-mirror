@@ -206,9 +206,17 @@ http {
             resolver 8.8.8.8;
             proxy_pass $uri;
 
+            proxy_intercept_errors on;
+            error_page 301 302 307 = @proxy_redirect;
+
             proxy_buffers           4 512k;
             proxy_buffer_size         256k;
             proxy_busy_buffers_size   512k;
+        }
+        location @proxy_redirect {
+            resolver 8.8.8.8;
+            set $saved_redirect_location $upstream_http_location;
+            proxy_pass $saved_redirect_location;
         }
     }
 }
