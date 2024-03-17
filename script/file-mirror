@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.12.30
+# version: 24.03.17
 
 set -e
 
@@ -144,32 +144,68 @@ function smart_download() {
 function create_svc_conf {
   mkdir -p "$(dirname $1)"
   cat <<'EOF' > $1
-server {
-    listen       8080;
-    server_name  localhost;
-    root         /repo;
+user  nginx;
+worker_processes  auto;
 
-    # to make it easy for /proxy/http://host/*
-    # otherwise the http:// will become http:/
-    merge_slashes off;
+error_log  /var/log/nginx/error.log notice;
+pid        /var/run/nginx.pid;
 
-    location / {
-        autoindex on;
-        autoindex_exact_size off;
-        autoindex_localtime on;
-        charset utf-8;
-    }
+events {
+    worker_connections  1024;
+}
 
-    # try local file first, and then the original server
-    # e.g. /proxy/http://target/path
-    # try /path first, then request http://target/path
-    location /proxy/ {
-        rewrite ^/proxy/(.+(/[^/]+))$ $1 break;
-        try_files $2 @proxy;
-    }
-    location @proxy {
-        resolver 8.8.8.8;
-        proxy_pass $uri;
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+    access_log  /var/log/nginx/access.log  main;
+
+    sendfile           on;
+    keepalive_timeout  65;
+    #gzip  on;
+
+    limit_conn_zone $binary_remote_addr zone=addr:10m;
+    limit_req_zone  $binary_remote_addr zone=one:10m rate=1r/s;
+
+    server {
+        listen       8080;
+        server_name  localhost;
+        root         /repo;
+
+        # default security control, very restricted!
+        limit_conn addr 1;
+        limit_req  zone=one;
+        limit_rate 10k;
+
+        # to make it easy for /proxy/http://host/*
+        # otherwise the http:// will become http:/
+        merge_slashes off;
+
+        location / {
+            autoindex on;
+            autoindex_exact_size off;
+            autoindex_localtime on;
+            charset utf-8;
+        }
+
+        location = /proxy {
+            return 200 OK;
+        }
+
+        # try local file first, and then the original server
+        # e.g. /proxy/http://target/path
+        # try /path first, then request http://target/path
+        location ^~ /proxy/ {
+            rewrite ^/proxy/(.+(/[^/]+))$ $1 break;
+            try_files $2 @proxy;
+        }
+        location @proxy {
+            resolver 8.8.8.8;
+            proxy_pass $uri;
+        }
     }
 }
 EOF
@@ -217,7 +253,7 @@ elif [[ "$cmd" == "serve" ]]; then
   msg "create container: $SVC_NAME"
   $RUN $SUDO docker create --name $SVC_NAME \
     -v $(realpath $DIR_REPO):/repo \
-    -v $(realpath $CFG_REPO):/etc/nginx/conf.d/repo.conf \
+    -v $(realpath $CFG_REPO):/etc/nginx/nginx.conf \
     -p $SVC_PORT:8080 --restart unless-stopped \
     nginx:1.23.4-alpine
   msg "start container: $SVC_NAME"
