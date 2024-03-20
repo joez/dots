@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.17
+# version: 24.03.20
 
 set -e
 
@@ -165,7 +165,6 @@ http {
 
     sendfile           on;
     keepalive_timeout  65;
-    #gzip  on;
 
     limit_conn_zone $binary_remote_addr zone=addr:10m;
     limit_req_zone  $binary_remote_addr zone=one:10m rate=1r/s;
@@ -176,13 +175,18 @@ http {
         root         /repo;
 
         # default security control, very restricted!
-        limit_conn addr 1;
+        limit_conn addr 2;
         limit_req  zone=one;
         limit_rate 10k;
 
         # to make it easy for /proxy/http://host/*
         # otherwise the http:// will become http:/
         merge_slashes off;
+
+        # dns resolution for proxy
+        resolver 8.8.8.8;
+        # disable proxy buffering for simplicity
+        proxy_buffering off;
 
         location / {
             autoindex on;
@@ -191,30 +195,25 @@ http {
             charset utf-8;
         }
 
-        location = /proxy {
+        location ~ ^/proxy/?$ {
             return 200 OK;
         }
 
         # try local file first, and then the original server
         # e.g. /proxy/http://target/path
         # try /path first, then request http://target/path
-        location ^~ /proxy/ {
+        location ~ ^/proxy/https? {
             rewrite ^/proxy/(.+(/[^/]+))$ $1 break;
             try_files $2 @proxy;
         }
         location @proxy {
-            resolver 8.8.8.8;
             proxy_pass $uri;
 
+            # follow redirects
             proxy_intercept_errors on;
             error_page 301 302 307 = @proxy_redirect;
-
-            proxy_buffers           4 512k;
-            proxy_buffer_size         256k;
-            proxy_busy_buffers_size   512k;
         }
         location @proxy_redirect {
-            resolver 8.8.8.8;
             set $saved_redirect_location $upstream_http_location;
             proxy_pass $saved_redirect_location;
         }
