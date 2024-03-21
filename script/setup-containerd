@@ -23,7 +23,7 @@ ARCH="$(uname -m | sed 's/x86_64/amd64/')"
 VARIANT="$(uname -s | tr A-Z a-z)-$ARCH"
 
 BASEURL="https://github.com/containerd/containerd"
-MIRROR_URL="https://ghps.cc"
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"
 
 RUNC_VERSION="${RUNC_VERSION:-1.1.7}"
 RUNC_BASEURL="https://github.com/opencontainers/runc"

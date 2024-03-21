@@ -22,7 +22,7 @@ UNINSTALL=n           # reset the deployment and uninstall components
 OFFLINE=${OFFLINE:-n} # no external network
 
 REPO_URL="https://github.com/cert-manager/cert-manager"
-MIRROR_URL="${MIRROR_URL:-https://ghps.cc}"
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"
 GCLOUD_URL="https://packages.cloud.google.com"
 
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"

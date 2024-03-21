@@ -21,7 +21,7 @@ UNINSTALL=n           # reset the deployment and uninstall components
 OFFLINE=${OFFLINE:-n} # no external network
 
 BASEURL="https://github.com/istio/istio"
-MIRROR_URL="${MIRROR_URL:-https://ghps.cc}"
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
 
 GCLOUD_TEST_URL="https://packages.cloud.google.com"        # google cloud url for test
