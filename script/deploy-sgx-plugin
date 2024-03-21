@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.17
+# version: 24.03.21
 
 set -e
 
@@ -27,7 +27,7 @@ MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"             # mirror to use fo
 
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
 TIMEOUT="300s"
-NAMESPACE="kube-system"
+NAMESPACE="default"
 
 CACHE="cache"
 CACHE_MANIFESTS="$CACHE/manifests"
@@ -147,6 +147,8 @@ function main() {
   local package_dir="$CACHE_PACKAGES/$dir_plugin-$VERSION"
   local package_file="v$VERSION.tar.gz"
   local package_path="$package_dir/$package_file"
+  local manifest_app="$CACHE_RUN/sgx-demo.yaml"
+  local manifest_app_ra="$CACHE_RUN/sgx-ra-demo.yaml"
 
   mkdir -p $package_dir $manifest_dir
 
@@ -172,9 +174,10 @@ function main() {
 
   if [[ $RESET == "y" ]]; then
     msg "delete $NAME deployment (if any)"
-	for m in "nfd/overlays/node-feature-rules sgx_plugin/overlays/epc-nfd sgx_plugin/overlays/epc-register sgx_admissionwebhook"; do
+    local modules="nfd/overlays/node-feature-rules sgx_plugin/overlays/epc-nfd sgx_plugin/overlays/epc-register sgx_admissionwebhook"
+    for m in $modules; do
       kubectl delete --ignore-not-found -k "$manifest_dir_deploy/$m" 2>/dev/null || true
-	done
+    done
   else
     msg "deploy $NAME (with NFD: $HAS_NFD)"
     local modules="sgx_plugin/overlays/epc-register sgx_admissionwebhook"
@@ -184,6 +187,53 @@ function main() {
     for m in $modules; do
       kubectl apply -k "$manifest_dir_deploy/$m"
     done
+
+    msg "deploy files for demo to $CACHE_RUN"
+    tar xzf $package_path -C $CACHE_RUN --strip-components=1
+    cat <<'EOF' > $manifest_app
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: sgx-demo
+  annotations:
+    sgx.intel.com/quote-provider: aesmd
+  name: sgx-demo
+spec:
+  containers:
+  - name: sgx-demo
+    image: intel/sgx-sdk-demo:devel
+    imagePullPolicy: IfNotPresent
+    command: ["/opt/intel/sgx-sample-app/sgx-sample-app"]
+    workingDir: "/opt/intel/sgx-sample-app/"
+    resources:
+      limits:
+        sgx.intel.com/epc: "512Ki"
+  dnsPolicy: ClusterFirst
+  restartPolicy: Never
+EOF
+    cat <<'EOF' > $manifest_app_ra
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: sgx-ra-demo
+  annotations:
+    sgx.intel.com/quote-provider: aesmd
+  name: sgx-ra-demo
+spec:
+  containers:
+  - name: sgx-ra-demo
+    image: intel/sgx-sdk-demo:devel
+    imagePullPolicy: IfNotPresent
+    command: ["/opt/intel/sgx-quote-generation/sgx-quote-generation"]
+    workingDir: "/opt/intel/sgx-quote-generation/"
+    resources:
+      limits:
+        sgx.intel.com/epc: "512Ki"
+  dnsPolicy: ClusterFirst
+  restartPolicy: Never
+EOF
   fi
 
   if [[ $RESET != "y" ]]; then
@@ -193,13 +243,44 @@ function main() {
     cat <<EOF
 
 # here are some tips to follow:
+
 # check current status
 kubectl get -n $NAMESPACE ds
+
+# check SGX is supported and enabled
+cpuid -1 | grep -i sgx
 
 # check SGX driver is ready
 ls /dev/sgx*
 
-# check more details from $REPO_URL
+# build container images for demo
+(cd $CACHE_RUN && make sgx-aesmd-demo sgx-sdk-demo)
+for i in aesmd sdk; do
+  docker tag intel/sgx-\$i-demo:$VERSION intel/sgx-\$i-demo:devel
+done
+
+# deploy sgx demo and check result
+kubectl apply -f $manifest_app
+kubectl logs sgx-demo
+
+# deploy SGX ECDSA attestation demo
+# assume the PCCS has been deployed
+systemctl status pccs | head
+
+# deploy aesmd with PCCS at current host
+sed -i -e "/pccs_url/ s/localhost/$(hostname)/" $CACHE_RUN/deployments/sgx_aesmd/base/sgx_default_qcnl.conf
+kubectl apply -k $CACHE_RUN/deployments/sgx_aesmd
+
+# deploy demo and check result
+kubectl apply -f $manifest_app_ra
+kubectl logs sgx-ra-demo
+
+# remove the demo
+kubectl delete -f $manifest_app_ra
+kubectl delete -f $manifest_app
+kubectl delete -k $CACHE_RUN/deployments/sgx_aesmd
+
+# check more info at $REPO_URL
 EOF
   fi
 
