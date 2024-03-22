@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.21
+# version: 24.03.22
 
 set -e
 
@@ -27,7 +27,7 @@ MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"             # mirror to use fo
 
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
 TIMEOUT="300s"
-NAMESPACE="default"
+NAMESPACE="kube-system"
 
 CACHE="cache"
 CACHE_MANIFESTS="$CACHE/manifests"
@@ -84,8 +84,15 @@ EOF
 
 function current_version() {
   local version=
+  local name="ds/intel-sgx-plugin"
   if which kubectl >/dev/null; then
-    version="$(kubectl describe -n $NAMESPACE ds/intel-sgx-plugin 2>/dev/null | sed -n 's/^\s*Image:\s*.*://p')"
+    # check all the possible namespaces
+    for n in default kube-system; do
+      if kubectl get -n $n $name >/dev/null 2>&1; then
+        version="$(kubectl describe -n $n $name 2>/dev/null | sed -n 's/^\s*Image:\s*.*://p')"
+	break
+      fi
+    done
   fi
   echo $version
 }
@@ -97,6 +104,9 @@ function check_nfd() {
   local ns="node-feature-discovery"
   if kubectl get -n $ns deploy/nfd-master >/dev/null 2>&1; then
     HAS_NFD=y
+    # FIXME: hack here to follow SGX device plugin's mistake
+    # it is deployed into default namespace when NFD is enabled, which is confusing
+    NAMESPACE="default"
   fi
   msg "NFD is deployed: $HAS_NFD"
 }
@@ -174,15 +184,21 @@ function main() {
 
   if [[ $RESET == "y" ]]; then
     msg "delete $NAME deployment (if any)"
-    local modules="nfd/overlays/node-feature-rules sgx_plugin/overlays/epc-nfd sgx_plugin/overlays/epc-register sgx_admissionwebhook"
+    local modules="nfd/overlays/node-feature-rules sgx_plugin/overlays/epc-nfd
+                   sgx_plugin/overlays/epc-register sgx_admissionwebhook/overlays/default-with-certmanager"
     for m in $modules; do
       kubectl delete --ignore-not-found -k "$manifest_dir_deploy/$m" 2>/dev/null || true
     done
   else
     msg "deploy $NAME (with NFD: $HAS_NFD)"
-    local modules="sgx_plugin/overlays/epc-register sgx_admissionwebhook"
+    local modules="sgx_plugin/overlays/epc-register sgx_admissionwebhook/overlays/default-with-certmanager"
     if [[ $HAS_NFD == "y" ]]; then
       modules="nfd/overlays/node-feature-rules sgx_plugin/overlays/epc-nfd"
+    else
+      # FIXME: remove this once the issue is fixed
+      local yaml="$manifest_dir_deploy/sgx_plugin/overlays/epc-register/kustomization.yaml"
+      msg "patch $yaml to fix known issue"
+      sed -i -e "s/kind:\s*DaemonSet/name: intel-sgx-plugin/" $yaml || true
     fi
     for m in $modules; do
       kubectl apply -k "$manifest_dir_deploy/$m"
