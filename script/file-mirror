@@ -208,6 +208,8 @@ http {
 
         # dns resolution for proxy
         resolver 8.8.8.8;
+        # pass server name through SNI
+        proxy_ssl_server_name on;
         # disable proxy buffering for simplicity
         proxy_buffering off;
 
