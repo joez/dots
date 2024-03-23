@@ -12,6 +12,8 @@ DIR_REPO="$DIR_HOME/repo"
 CFG_REPO="$DIR_HOME/repo.conf"
 DIR_TEMP="$DIR_HOME/.download"
 
+UPSTREAM="$UPSTREAM"         # will try upstream first to download
+
 SVC_NAME="${SVC_NAME:-file}" # container name
 SVC_PORT="${SVC_PORT:-9070}" # port number
 
@@ -46,6 +48,7 @@ Commands:
 Environment variables:
   DRY_RUN:     print out information only, if it is "y", default: $DRY_RUN
   DIR_HOME:    root folder for this app, default: $DIR_HOME
+  UPSTREAM:    download from upstream first if it is defined, default: $UPSTREAM
   SVC_NAME:    container name to use: default: $SVC_NAME
   SVC_PORT:    port number to listen: default: $SVC_PORT
 
@@ -67,6 +70,9 @@ Examples:
 
   # Download files from remote server
   $SELF pull https://iffi.me/{demo-bot,file-mirror}
+
+  # Download files from remote server, try upstream first
+  UPSTREAM=https://iffi.me/proxy $SELF pull https://go.dev/doc/effective_go
 
   # Get the local file path
   $SELF get https://iffi.me/demo-bot
@@ -101,14 +107,27 @@ function has() {
   [[ -z "${1##*$2*}" ]] && [[ -z "$2" || -n "$1" ]]
 }
 
+function url_to_try() {
+  local target="${1:?missing target}" && shift
+  local sep="$DELIMITER"
+  local url=
+
+  for upstream in "$@"; do
+	upstream="${upstream%/}"
+    url+="$upstream/$target$sep"
+  done
+
+  echo "$url$target"
+}
+
 # print out "OK: $download" when success
 # CAUTION: for simplicity, all the files will be stored
 # in one folder, which may have name conflict!
 # The caller should ensure the file names are unique
 function smart_download() {
-  local dir="${DIR_REPO:-repo}"
-  local tmp="${DIR_TEMP:-.download}"
-  local sep="${DELIMITER:-^}"
+  local dir="$DIR_REPO"
+  local tmp="$DIR_TEMP"
+  local sep="$DELIMITER"
 
   $RUN mkdir -p $dir $tmp
   for i in "$@"; do
@@ -245,11 +264,11 @@ if [[ "$cmd" == "pull" ]]; then
   fi
   while IFS= read -r url; do
     msg "processing $url"
-    smart_download "$url"
+    smart_download "$(url_to_try "$url" $UPSTREAM)"
   done
 elif [[ "$cmd" == "get" ]]; then
   [[ -z "$1" ]] && exit 1
-  downloaded="$(smart_download "$1" | sed -n 's/^OK: *//p')"
+  downloaded="$(smart_download "$(url_to_try "$1" $UPSTREAM)" | sed -n 's/^OK: *//p')"
   [[ -f "$downloaded" ]] && echo "$downloaded"
   exit
 elif [[ "$cmd" == "serve" ]]; then
