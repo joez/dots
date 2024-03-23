@@ -210,8 +210,10 @@ http {
         resolver 8.8.8.8;
         # pass server name through SNI
         proxy_ssl_server_name on;
-        # disable proxy buffering for simplicity
-        proxy_buffering off;
+        # large proxy buffering for big header
+        proxy_buffers         4 512k;
+        proxy_buffer_size       256k;
+        proxy_busy_buffers_size 512k;
 
         location / {
             autoindex on;
@@ -227,7 +229,7 @@ http {
         # try local file first, and then the original server
         # e.g. /proxy/http://target/path
         # try /path first, then request http://target/path
-        location ~ ^/proxy/https? {
+        location ~ ^/proxy/https?:// {
             rewrite ^/proxy/(.+(/[^/]+))$ $1 break;
             try_files $2 @proxy;
         }
