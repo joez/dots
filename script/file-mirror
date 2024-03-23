@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.22
+# version: 24.03.23
 
 set -e
 
@@ -102,11 +102,15 @@ function has() {
 }
 
 # print out "OK: $download" when success
+# CAUTION: for simplicity, all the files will be stored
+# in one folder, which may have name conflict!
+# The caller should ensure the file names are unique
 function smart_download() {
   local dir="${DIR_REPO:-repo}"
   local tmp="${DIR_TEMP:-.download}"
   local sep="${DELIMITER:-^}"
 
+  $RUN mkdir -p $dir $tmp
   for i in "$@"; do
     msg "download: $i"
     local name="$(basename $i)"
@@ -136,7 +140,7 @@ function smart_download() {
     else
       $RUN wget -c -P $tmp $i
     fi
-    $RUN ln -f $downloading $downloaded
+    $RUN mv $downloading $downloaded
     echo "OK: $downloaded"
   done
 }
@@ -222,6 +226,8 @@ http {
 EOF
 
 }
+
+# main
 
 if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" || "$1" == "help" ]]; then
   usage && exit
