@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.23
+# version: 24.03.24
 
 set -e
 
@@ -29,16 +29,14 @@ DELIMITER='^'
 function usage() {
   cat <<EOF
 Usage: $SELF [command] [args]
-  Download files and serve a local file server
+  Download files and host a local file server
 
-  The downloading files will be saved at a temporary folder ($DIR_TEMP),
-  a hard link will be created in the final folder ($DIR_REPO) if the download
-  is successful, otherwise it will exit, and it supports continue download for
-  the next run.
+  Files will be temporarily saved in $DIR_TEMP. Upon a successful download,
+  they will be moved to $DIR_REPO. If the download fails, the process will
+  terminate and will try to download continously on subsequent attempts.
 
-  It can support to download file from mutiple sources, try one by one until
-  any one is successful. You can append multiple sources in the url separated
-  by a delimiter ($DELIMITER)
+  It can download files from multiple sources, attempting each sequentially
+  until one succeeds. Just add sources in the url delimited by $DELIMITER.
 
 Commands:
   pull [<url>...]  download the files, read from stdin if no url
@@ -46,22 +44,23 @@ Commands:
   serve            start the local file server
 
 Environment variables:
-  DRY_RUN:     print out information only, if it is "y", default: $DRY_RUN
+  DRY_RUN:     print out information only if it is "y", default: $DRY_RUN
   DIR_HOME:    root folder for this app, default: $DIR_HOME
-  UPSTREAM:    download from upstream first if it is defined, default: $UPSTREAM
+  UPSTREAM:    download from upstream first if specified, default: $UPSTREAM
   SVC_NAME:    container name to use: default: $SVC_NAME
   SVC_PORT:    port number to listen: default: $SVC_PORT
 
 HTTP proxy:
 
-  It can support to be as an HTTP proxy, just request it with a "/proxy" prefix
-  for the target url, e.g., assume it listens on "http://host:port", and the
-  target url is "https://target/path/file", you can request it as following:
+  To use as an HTTP proxy, simply prefix your request URL with "/proxy".
+  For example, if the service is running at "https://host:port" and you want to
+  access "https://target/path/file", format your request as:
 
-    curl -L http://host:port/proxy/https://target/path/file
+    https://host:port/proxy/https://target/path/file
 
-  It will try to find file locally first, if not exist, requests remote server
-  for the target url and respond to the client just like an HTTP proxy
+  This process will first check for the file locally. If unavailable, it will
+  proxy the request to the remote server and serve it to the client, mimicking
+  the behavior of an HTTP proxy.
 
 Examples:
 
@@ -71,25 +70,25 @@ Examples:
   # Download files from remote server
   $SELF pull https://iffi.me/{demo-bot,file-mirror}
 
-  # Download files from remote server, try upstream first
-  UPSTREAM=https://iffi.me/proxy $SELF pull https://go.dev/doc/effective_go
-
   # Get the local file path
   $SELF get https://iffi.me/demo-bot
 
   # Start the local file server
   $SELF serve
 
-  # Download file from multiple sources
-  f=go1.16.linux-amd64.tar.gz && \\
-  $SELF pull https://dl.google.com/go/\$f^https://https://golang.google.cn/dl/\$f
+  # Download a file from multiple sources
+  f=go1.22.1.linux-amd64.tar.gz && \\
+  $SELF pull https://go.dev/dl/\$f^https://golang.google.cn/dl/\$f
+
+  # Download files from remote server, try upstream first
+  UPSTREAM=https://iffi.me/proxy $SELF pull https://go.dev/doc/effective_go
 
   # Download files with a file list
-  cat file-list.txt | $SELF pull
+  $SELF pull < file-list.txt
 
   # Get url through $SELF as a HTTP proxy
-  target=https://github.com/joez/ptk/raw/master/Changes
-  curl -L localhost:$SVC_PORT/proxy/\$target
+  target=https://github.com/joez/dots/raw/master/LICENSE && \\
+  curl localhost:$SVC_PORT/proxy/\$target
 
 Version: $SELF_VERSION
 EOF
