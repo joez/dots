@@ -30,6 +30,7 @@ CACHE_IMAGES="$CACHE/images"          # exported container images
 CACHE_MANIFESTS="$CACHE/manifests"    # manifest files in YAML format
 CACHE_PACKAGES="$CACHE/packages"      # software packages, such as .deb
 CACHE_RUN="$CACHE/run/$SELF"          # runtime generated files
+CACHE_DOWNLOADING="$CACHE/.download"  # temp folder for downloading
 
 ADDRESS=$HOST_IP      # API server IP address
 PORT=6443             # API server IP port
@@ -388,6 +389,21 @@ function mirror_url() {
   fi
 }
 
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  msg "download: $src"
+  if [[ -f "$dst" ]]; then
+    msg "already exist"
+  else
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+  fi
+  msg "done: $dst"
+}
+
 function install_cri_dockerd_if_needed() {
   msg "install cri-dockerd if needed"
 
@@ -409,31 +425,26 @@ function install_cri_dockerd_if_needed() {
       fi
     fi
 
+    local arch="$(uname -m | sed 's/x86_64/amd64/')"
+    local name="cri-dockerd-$ver.$arch.tgz"
     local dir="$CACHE_PACKAGES/common/cri-dockerd-$ver"
+    local pkg="$dir/$name"
+
     mkdir -p $dir
 
     if [[ $OFFLINE == "y" ]]; then
       msg "WARNING: offline mode, cache must be ready"
       msg "try to install from the cache"
     else
-      msg "download into $dir"
-      if [[ ! -e $dir/cri-dockerd ]]; then
-        local arch="$(uname -m | sed 's/x86_64/amd64/')"
-        local u="$url/releases/download/v$ver/cri-dockerd-$ver.$arch.tgz"
-        msg "downloading $u"
-        curl -sL $u | tar xz -C $dir --strip-components=1
-      fi
+      download_file "$url/releases/download/v$ver/$name" $pkg
       for f in cri-docker.{service,socket}; do
-        if [[ ! -e $dir/$f ]]; then
-          local u="$url/raw/v${ver}/packaging/systemd/$f"
-          msg "downloading $u"
-          curl -sL $u > $dir/$f
-        fi
+        download_file "$url/raw/v${ver}/packaging/systemd/$f" $dir/$f
       done
     fi
 
     msg "install cri-dockerd $ver"
-    $SUDO install $dir/cri-dockerd /usr/bin/
+    tar xzf $pkg -C $CACHE_RUN --strip-components=1
+    $SUDO install $CACHE_RUN/cri-dockerd /usr/bin/
     $SUDO install $dir/cri-docker.{service,socket} /etc/systemd/system/
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable cri-docker.service
@@ -762,7 +773,7 @@ function validate_sudo() {
 function ensure_workdir() {
   msg "ensure workdir"
 
-  for d in $CACHE_IMAGES $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN; do
+  for d in $CACHE_IMAGES $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN $CACHE_DOWNLOADING; do
     if [[ ! -d $d ]]; then
       msg "create dir: $d"
       mkdir -p $d
@@ -998,8 +1009,7 @@ function init_cluster() {
   msg "download flannel manifest"
   if [[ ! -e $flannel ]]; then
     local u="$(mirror_url $FLANNEL_BASEURL)/raw/v$FLANNEL_VERSION/Documentation/kube-flannel.yml"
-    msg "download $u -> $flannel"
-    curl -sL $u > $flannel
+    download_file $u $flannel
   fi
 
   local localpp_dir="$CACHE_MANIFESTS/local-path-provisioner-$LOCALPP_VERSION"
@@ -1009,8 +1019,7 @@ function init_cluster() {
   msg "download local-path-provisioner manifest"
   if [[ ! -e $localpp ]]; then
     local u="$(mirror_url $LOCALPP_BASEURL)/raw/v$LOCALPP_VERSION/deploy/local-path-storage.yaml"
-    msg "download $u -> $localpp"
-    curl -sL $u > $localpp
+    download_file $u $localpp
   fi
 
   # different CNI addon requires different pod-network-cider, here is for flannel
