@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.14
+# version: 24.03.26
 
 set -e
 
@@ -14,7 +14,7 @@ fi
 
 # IP of the primary interface on the host
 HOST_IP=$(ip route get 1 | head -1 | awk '{print $7}')
-HOST_DNS=$(perl -e 'use Net::Domain hostfqdn; print hostfqdn')
+HOST_DNS=$(perl -e 'use Net::Domain hostfqdn; print hostfqdn' | sed 's/[.]*$//')
 HOST_NAME=$(perl -e 'use Net::Domain hostname; print hostname')
 
 K8S_NOPROXY=".svc,.svc.cluster.local"
