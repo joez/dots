@@ -1030,7 +1030,6 @@ function init_cluster() {
   local name="$HOST_NAME"
   local ckey="$(kubeadm certs certificate-key)"
   local token="$(kubeadm token generate)"
-  local params="--kubernetes-version=$VERSION --apiserver-advertise-address=$ADDRESS --pod-network-cidr=$cidr --token=$token"
   local extras=
   local repo_config=
   local sans_config='  - "localhost"'
@@ -1040,7 +1039,6 @@ function init_cluster() {
   local sock_option=
 
   if [[ -n $SANS ]]; then
-    params="$params --apiserver-cert-extra-sans=$SANS"
     for s in $(echo $SANS | tr , '\n')
     do
       sans_config="$(printf '%s\n  - "%s"' "$sans_config" "$s")"
@@ -1048,31 +1046,26 @@ function init_cluster() {
   fi
   if [[ -n $ENDPOINT ]]; then
     # need HA
-    params="$params --control-plane-endpoint=$ENDPOINT --certificate-key=$ckey --upload-certs"
     cpep_config="controlPlaneEndpoint: \"$ENDPOINT\""
     ckey_config="certificateKey: \"$ckey\""
     extras="$extras --upload-certs"
     msg "control-plane endpoint specified, upload the certificates for HA setup"
   fi
   if [[ -n $NODE ]]; then
-    params="$params --node-name=$NODE"
     name="$NODE"
   fi
   if [[ $NEED_MIRROR == "y" ]]; then
     local repo="$K8S_REG_MIRROR"
-    params="$params --image-repository $repo"
     repo_config="imageRepository: \"$repo\""
     msg "mirror is required, use image repository: $repo"
   fi
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
     sock_option="--cri-socket $CRI_DOCKERD_SOCKET"
     sock_config="  criSocket: \"$CRI_DOCKERD_SOCKET\""
-    params="$params $sock_option"
     msg "set cri-socket as $CRI_DOCKERD_SOCKET"
   elif [[ $CRI_RUNTIME == "containerd" ]]; then
     sock_option="--cri-socket $CRI_CONTAINERD_SOCKET"
     sock_config="  criSocket: \"$CRI_CONTAINERD_SOCKET\""
-    params="$params $sock_option"
     msg "set cri-socket as $CRI_CONTAINERD_SOCKET"
   fi
 
@@ -1134,9 +1127,6 @@ EOF
 
   msg "init k8s control-plane node, ver:$VERSION, api:$ADDRESS"
   msg "details in $INIT_CONFIG"
-  # TODO: remove $params once the --config way is stable
-  # for debug purpose
-#  $SUDO env $(env | grep -i proxy) kubeadm init $params
   $SUDO env $(env | grep -i proxy) kubeadm init --config $INIT_CONFIG $extras
 
   # config
