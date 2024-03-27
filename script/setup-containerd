@@ -23,13 +23,11 @@ ARCH="$(uname -m | sed 's/x86_64/amd64/')"
 VARIANT="$(uname -s | tr A-Z a-z)-$ARCH"
 
 BASEURL="https://github.com/containerd/containerd"
-MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"
+GITHUB_RAW="https://raw.githubusercontent.com"    # github raw content base url
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror to use for github
 
 RUNC_VERSION="${RUNC_VERSION:-1.1.7}"
 RUNC_BASEURL="https://github.com/opencontainers/runc"
-
-GITHUB_RAW="https://raw.githubusercontent.com"             # github raw content base url
-GCLOUD_TEST_URL="https://packages.cloud.google.com"        # google cloud url for test
 
 CACHE="cache"
 CACHE_RUN="$CACHE/run/$SELF"
@@ -59,6 +57,11 @@ Usage: $SELF [-m <type>] [-v <ver>] [-U] [-n] [-h]
 Cache:
 
   To speed up deployment, the required files will be cached at "$CACHE"
+
+Environment variables:
+  MIRROR_URL:    mirror to use for GitHub, default: $MIRROR_URL
+  OFFLINE:       force into offline mode [y n], default: $OFFLINE
+  RUNC_VERSION:  version of runc, default: $RUNC_VERSION
 
 Examples:
 
@@ -98,7 +101,7 @@ function main() {
   done
   shift $((OPTIND-1))
 
-  for v in CACHE DRY_RUN MIRROR RUNC_VERSION UNINSTALL VERSION
+  for v in CACHE DRY_RUN MIRROR MIRROR_URL RUNC_VERSION UNINSTALL VERSION
   do
     eval echo "$v: \${$v}"
   done
@@ -132,7 +135,6 @@ function main() {
 
   if [[ $OFFLINE == "y" ]]; then
     msg "WARNING: offline mode, cache must be ready"
-    msg "try to install from the cache"
   else
     local base_url="$(mirror_url $BASEURL)"
     local base_url_runc="$(mirror_url $RUNC_BASEURL)"
@@ -146,7 +148,7 @@ function main() {
   tar xzf $package_pkg -C $run_dir
 
   if [[ $UNINSTALL == "y" ]]; then
-    msg "uninstall containerd"
+    msg "uninstall $name_bin"
     $SUDO systemctl stop $name_bin || true
     $SUDO rm -f $install_svc $install_svc_cfg
     $SUDO systemctl daemon-reload
@@ -157,7 +159,7 @@ function main() {
     msg "uninstall runc"
     $SUDO rm -f $install_bin_runc
   else
-    msg "install containerd"
+    msg "install $name_bin"
     $SUDO install -t $install_dir $run_bin/*
     $SUDO cp $package_svc $install_svc
     $SUDO mkdir -p $(dirname $install_svc_cfg)
@@ -179,8 +181,10 @@ EOF
 # here are some tips to follow:
 # check the current configuration
 containerd config dump
+
 # pull container image
 sudo ctr image pull docker.io/library/busybox:latest
+
 # create and run a container
 sudo ctr run --rm -t docker.io/library/busybox:latest test
 EOF
