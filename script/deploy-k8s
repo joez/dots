@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.26
+# version: 24.03.27
 
 set -e
 
@@ -365,8 +365,9 @@ function ensure_cri_dockerd_uninstalled() {
   fi
 }
 
+# the target URL is reachable but the response may be 4xx or 5xx
 function can_access() {
-   curl -IL -f -s -m 5 $1 >/dev/null 2>&1
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
 }
 
 function mirror_url() {
