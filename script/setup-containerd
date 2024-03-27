@@ -32,7 +32,9 @@ GITHUB_RAW="https://raw.githubusercontent.com"             # github raw content 
 GCLOUD_TEST_URL="https://packages.cloud.google.com"        # google cloud url for test
 
 CACHE="cache"
+CACHE_RUN="$CACHE/run/$SELF"
 CACHE_PACKAGES="$CACHE/packages/common"
+CACHE_DOWNLOADING="$CACHE/.download"
 
 function msg() {
   echo "> $@"
@@ -111,11 +113,13 @@ function main() {
 
   local name_bin="containerd"
   local name_svc="$name_bin.service"
+  local name_pkg="$name_bin-$VERSION-$VARIANT.tar.gz"
   local package_dir="$CACHE_PACKAGES/$name_bin-$VERSION"
-  local package_bin="$package_dir/bin/$name_bin"
+  local package_pkg="$package_dir/$name_pkg"
+  local run_dir="$CACHE_RUN"
+  local run_bin="$CACHE_RUN/bin"
   local package_svc="$package_dir/$name_svc"
   local install_dir="/usr/local/bin"
-  local install_bin="$install_dir/$name_bin"
   local install_etc="/etc/$name_bin/config.toml"
   local install_svc="/lib/systemd/system/$name_svc"
   local install_svc_cfg="/etc/systemd/system/$name_svc.d/http-proxy.conf"
@@ -132,25 +136,14 @@ function main() {
   else
     local base_url="$(mirror_url $BASEURL)"
     local base_url_runc="$(mirror_url $RUNC_BASEURL)"
-    local file="$name_bin-$VERSION-$VARIANT.tar.gz"
-    local file_runc="runc.$ARCH"
 
-    if [[ ! -e "$package_bin" ]]; then
-      local package_url="$base_url/releases/download/v$VERSION/$file"
-      msg "download $package_url -> $package_dir"
-      curl -L $package_url | tar xz -C $package_dir
-    fi
-    if [[ ! -e "$package_svc" ]]; then
-      local service_url="$base_url/raw/main/$name_svc"
-      msg "download $service_url -> $package_dir"
-      curl -L $service_url > $package_svc
-    fi
-    if [[ ! -e "$package_bin_runc" ]]; then
-      local package_url_runc="$base_url_runc/releases/download/v$RUNC_VERSION/$file_runc"
-      msg "download $package_url_runc -> $package_dir_runc"
-      curl -L $package_url_runc > $package_bin_runc
-    fi
+    download_file "$base_url/raw/main/$name_svc" $package_svc
+    download_file "$base_url/releases/download/v$VERSION/$name_pkg" $package_pkg
+    download_file "$base_url_runc/releases/download/v$RUNC_VERSION/runc.$ARCH" $package_bin_runc
   fi
+
+  msg "extract package to $run_dir"
+  tar xzf $package_pkg -C $run_dir
 
   if [[ $UNINSTALL == "y" ]]; then
     msg "uninstall containerd"
@@ -158,16 +151,15 @@ function main() {
     $SUDO rm -f $install_svc $install_svc_cfg
     $SUDO systemctl daemon-reload
     $SUDO rm -f $install_etc
-    for f in $(dirname $package_bin)/*; do
-      local n="${f##*/}"
-      $SUDO rm -f $install_dir/$n
+    for f in $run_bin/*; do
+      $SUDO rm -f $install_dir/${f##*/}
     done
     msg "uninstall runc"
     $SUDO rm -f $install_bin_runc
   else
     msg "install containerd"
-    $SUDO install -t $install_dir $(dirname $package_bin)/*
-    $SUDO cp $package_dir/$name_svc $install_svc
+    $SUDO install -t $install_dir $run_bin/*
+    $SUDO cp $package_svc $install_svc
     $SUDO mkdir -p $(dirname $install_svc_cfg)
     cat <<EOF | $SUDO tee $install_svc_cfg
 [Service]
@@ -257,7 +249,7 @@ function check_mirror() {
   fi
   if [[ $MIRROR == "yes" ]]; then
     msg "mirror is needed"
-    if access_ok $MIRROR_URL; then
+    if can_access $MIRROR_URL; then
       USE_MIRROR="y"
     else
       err "failed to access mirror ($MIRROR_URL)"
@@ -279,12 +271,27 @@ function mirror_url() {
 function ensure_workdir() {
   msg "ensure workdir"
 
-  for d in $CACHE_PACKAGES; do
+  for d in $CACHE_RUN $CACHE_PACKAGES $CACHE_DOWNLOADING; do
     if [[ ! -d $d ]]; then
       msg "create dir: $d"
       mkdir -p $d
     fi
   done
+}
+
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  msg "download: $src"
+  if [[ -f "$dst" ]]; then
+    msg "already exist"
+  else
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+  fi
+  msg "saved at: $dst"
 }
 
 main "$@"
