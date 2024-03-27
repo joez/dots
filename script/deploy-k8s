@@ -327,7 +327,7 @@ function check_network() {
       msg "check container image downloading"
       local image="docker.io/library/hello-world:latest"
       if ! $CRI_CLIENT image pull $image >/dev/null 2>&1; then
-        err "$CRI_CLIENT pull image $image failed, check $CRI_RUNTIME configuration first"
+        err "$CRI_CLIENT image pull $image failed, check $CRI_RUNTIME configuration"
         exit 1
       fi
     fi
@@ -402,7 +402,7 @@ function download_file() {
     $RUN curl -fsSL $src > $tmp
     $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
   fi
-  msg "done: $dst"
+  msg "saved at: $dst"
 }
 
 function install_cri_dockerd_if_needed() {
@@ -1170,7 +1170,7 @@ EOF
     kubectl apply -f $flannel_mod
   fi
 
-  msg "deploy local-path-provisioner"
+  msg "deploy local-path-provisioner: $localpp"
   kubectl apply -f $localpp
   msg "set local-path as the default StorageClass"
   kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
