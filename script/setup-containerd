@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.07.01
+# version: 24.03.27
 
 set -e
 
@@ -28,6 +28,7 @@ MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"
 RUNC_VERSION="${RUNC_VERSION:-1.1.7}"
 RUNC_BASEURL="https://github.com/opencontainers/runc"
 
+GITHUB_RAW="https://raw.githubusercontent.com"             # github raw content base url
 GCLOUD_TEST_URL="https://packages.cloud.google.com"        # google cloud url for test
 
 CACHE="cache"
@@ -129,14 +130,10 @@ function main() {
     msg "WARNING: offline mode, cache must be ready"
     msg "try to install from the cache"
   else
-    local base_url="$BASEURL"
-    local base_url_runc="$RUNC_BASEURL"
+    local base_url="$(mirror_url $BASEURL)"
+    local base_url_runc="$(mirror_url $RUNC_BASEURL)"
     local file="$name_bin-$VERSION-$VARIANT.tar.gz"
     local file_runc="runc.$ARCH"
-    if [[ $NEED_MIRROR == "y" ]]; then
-      base_url="$MIRROR_URL/$base_url"
-      base_url_runc="$MIRROR_URL/$base_url_runc"
-    fi
 
     if [[ ! -e "$package_bin" ]]; then
       local package_url="$base_url/releases/download/v$VERSION/$file"
@@ -224,10 +221,15 @@ function check_prerequisites() {
   fi
 }
 
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
+}
+
 function check_network() {
   msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
-    if ! curl -s -m 3 -I example.com >/dev/null; then
+    if ! can_access example.com; then
       msg "can't access external network"
       OFFLINE="y"
     fi
@@ -235,17 +237,17 @@ function check_network() {
   msg "offline mode: $OFFLINE"
 }
 
-NEED_MIRROR=n
+USE_MIRROR=n
 function check_mirror() {
-  msg "is mirror needed"
+  msg "use mirror or not"
   if [[ $MIRROR == "auto" ]]; then
     MIRROR=yes # default as needed
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
-      msg "check whether we can access google cloud"
-      local target="$GCLOUD_TEST_URL"
-      if curl -s -m 5 $target >/dev/null 2>&1; then
+      msg "check whether we can access github"
+      local target="$GITHUB_RAW"
+      if can_access $target; then
         msg "curl $target is OK"
         MIRROR=no
       else
@@ -254,9 +256,24 @@ function check_mirror() {
     fi
   fi
   if [[ $MIRROR == "yes" ]]; then
-    NEED_MIRROR=y
+    msg "mirror is needed"
+    if access_ok $MIRROR_URL; then
+      USE_MIRROR="y"
+    else
+      err "failed to access mirror ($MIRROR_URL)"
+    fi
   fi
-  msg "need mirror: $NEED_MIRROR"
+  msg "use mirror: $USE_MIRROR"
+}
+
+function mirror_url() {
+  local origin="${1:?argument missing}"
+
+  if [[ $USE_MIRROR = "y" ]]; then
+    echo -n "$MIRROR_URL/$origin"
+  else
+    echo -n "$origin"
+  fi
 }
 
 function ensure_workdir() {
