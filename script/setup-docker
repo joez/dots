@@ -205,10 +205,15 @@ function check_prerequisites() {
   fi
 }
 
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
+}
+
 function check_network() {
   msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
-    if ! curl -s -m 3 -I example.com >/dev/null; then
+    if ! can_access example.com; then
       msg "can't access external network"
       OFFLINE="y"
     fi
@@ -238,7 +243,7 @@ function check_mirror() {
     else
       msg "check whether we can access docker repo"
       local target="$DOCKER_REPO"
-      if curl -s -m 5 $target >/dev/null 2>&1; then
+      if can_access $target; then
         msg "curl $target is OK"
         MIRROR=no
       else
