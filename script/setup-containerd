@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.27
+# version: 24.03.28
 
 set -e
 
@@ -12,7 +12,7 @@ if [[ $(id -u) == "0" ]]; then
   SUDO=""
 fi
 
-VERSION="1.7.2"       # version to install
+VERSION="1.7.14"      # version to install
 DRY_RUN=n             # print information only
 MIRROR="auto"         # mirror option
 MIRRORS="yes no auto" # valid mirror options
@@ -26,7 +26,7 @@ BASEURL="https://github.com/containerd/containerd"
 GITHUB_RAW="https://raw.githubusercontent.com"    # github raw content base url
 MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror to use for github
 
-RUNC_VERSION="${RUNC_VERSION:-1.1.7}"
+RUNC_VERSION="${RUNC_VERSION:-1.1.12}"
 RUNC_BASEURL="https://github.com/opencontainers/runc"
 
 CACHE="cache"
@@ -72,7 +72,7 @@ Examples:
      $SELF -U
 
   3. Install containerd with specific version
-     $SELF -v 1.7.2
+     $SELF -v 1.7.14
 
 Version: $SELF_VERSION
 EOF
