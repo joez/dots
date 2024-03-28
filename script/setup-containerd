@@ -6,6 +6,7 @@ set -e
 
 SELF="$(basename $0)"
 SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+NAME="${SELF#*-}"
 
 SUDO="sudo"
 if [[ $(id -u) == "0" ]]; then
@@ -13,6 +14,7 @@ if [[ $(id -u) == "0" ]]; then
 fi
 
 VERSION="1.7.14"      # version to install
+CUR_VER=              # current version if any
 DRY_RUN=n             # print information only
 MIRROR="auto"         # mirror option
 MIRRORS="yes no auto" # valid mirror options
@@ -21,6 +23,12 @@ OFFLINE=${OFFLINE:-n} # no external network
 
 ARCH="$(uname -m | sed 's/x86_64/amd64/')"
 VARIANT="$(uname -s | tr A-Z a-z)-$ARCH"
+INSTALL_DIR_BIN="/usr/local/bin"
+INSTALL_DIR_SVC="/lib/systemd/system"
+INSTALL_DIR_CFG="/etc/systemd/system"
+ETC_CFG="/etc/$NAME/config.toml"
+SVC_BIN="$INSTALL_DIR_SVC/$NAME.service"
+SVC_CFG="$INSTALL_DIR_CFG/$NAME.service.d/http-proxy.conf"
 
 BASEURL="https://github.com/containerd/containerd"
 GITHUB_RAW="https://raw.githubusercontent.com"    # github raw content base url
@@ -46,7 +54,7 @@ function usage() {
   cat <<EOF
 Usage: $SELF [-m <type>] [-v <ver>] [-U] [-n] [-h]
 
-  Setup containerd the easy way
+  Setup $NAME the easy way
 
   -m <type>: install via mirror [$MIRRORS], default: $MIRROR
   -v <ver>:  target version, default: $VERSION
@@ -65,13 +73,13 @@ Environment variables:
 
 Examples:
 
-  1. Install containerd
+  1. Install $NAME
      $SELF
 
-  2. Uninstall containerd
+  2. Uninstall $NAME
      $SELF -U
 
-  3. Install containerd with specific version
+  3. Install $NAME with specific version
      $SELF -v 1.7.14
 
 Version: $SELF_VERSION
@@ -80,8 +88,12 @@ EOF
 }
 
 function main() {
+  # ensure the right one is used
+  PATH=$INSTALL_DIR_BIN:$PATH
+
   # adjust default version if already deployed
-  VERSION="$(current_version)"
+  CUR_VER="$(current_version)"
+  VERSION="${CUR_VER:-$VERSION}"
 
   while getopts ":m:v:hnU" opt
   do
@@ -101,7 +113,7 @@ function main() {
   done
   shift $((OPTIND-1))
 
-  for v in CACHE DRY_RUN MIRROR MIRROR_URL RUNC_VERSION UNINSTALL VERSION
+  for v in CACHE DRY_RUN MIRROR MIRROR_URL RUNC_VERSION UNINSTALL VERSION CUR_VER
   do
     eval echo "$v: \${$v}"
   done
@@ -113,90 +125,20 @@ function main() {
   check_network
   check_mirror
   ensure_workdir
-
-  local name_bin="containerd"
-  local name_svc="$name_bin.service"
-  local name_pkg="$name_bin-$VERSION-$VARIANT.tar.gz"
-  local package_dir="$CACHE_PACKAGES/$name_bin-$VERSION"
-  local package_pkg="$package_dir/$name_pkg"
-  local run_dir="$CACHE_RUN"
-  local run_bin="$CACHE_RUN/bin"
-  local package_svc="$package_dir/$name_svc"
-  local install_dir="/usr/local/bin"
-  local install_etc="/etc/$name_bin/config.toml"
-  local install_svc="/lib/systemd/system/$name_svc"
-  local install_svc_cfg="/etc/systemd/system/$name_svc.d/http-proxy.conf"
-  local package_dir_runc="$CACHE_PACKAGES/runc-$RUNC_VERSION"
-  local package_bin_runc="$package_dir_runc/runc"
-  local install_dir_runc="/usr/local/bin"
-  local install_bin_runc="$install_dir_runc/runc"
-
-  mkdir -p $package_dir $package_dir_runc
-
-  if [[ $OFFLINE == "y" ]]; then
-    msg "WARNING: offline mode, cache must be ready"
-  else
-    local base_url="$(mirror_url $BASEURL)"
-    local base_url_runc="$(mirror_url $RUNC_BASEURL)"
-
-    download_file "$base_url/raw/main/$name_svc" $package_svc
-    download_file "$base_url/releases/download/v$VERSION/$name_pkg" $package_pkg
-    download_file "$base_url_runc/releases/download/v$RUNC_VERSION/runc.$ARCH" $package_bin_runc
-  fi
-
-  msg "extract package to $run_dir"
-  tar xzf $package_pkg -C $run_dir
-
+  ensure_cached
   if [[ $UNINSTALL == "y" ]]; then
-    msg "uninstall $name_bin"
-    $SUDO systemctl stop $name_bin || true
-    $SUDO rm -f $install_svc $install_svc_cfg
-    $SUDO systemctl daemon-reload
-    $SUDO rm -f $install_etc
-    for f in $run_bin/*; do
-      $SUDO rm -f $install_dir/${f##*/}
-    done
-    msg "uninstall runc"
-    $SUDO rm -f $install_bin_runc
+    ensure_uninstalled
   else
-    msg "install $name_bin"
-    $SUDO install -t $install_dir $run_bin/*
-    $SUDO cp $package_svc $install_svc
-    $SUDO mkdir -p $(dirname $install_svc_cfg)
-    cat <<EOF | $SUDO tee $install_svc_cfg
-[Service]
-Environment="HTTP_PROXY=$http_proxy"
-Environment="HTTPS_PROXY=$https_proxy"
-Environment="NO_PROXY=$no_proxy"
-EOF
-    $SUDO systemctl daemon-reload
-    $SUDO systemctl enable --now $name_bin
-    $SUDO mkdir -p $(dirname $install_etc)
-    $name_bin config default | $SUDO tee $install_etc >/dev/null
-    msg "install runc"
-    $SUDO install $package_bin_runc $install_bin_runc
-
-    cat <<EOF
-
-# here are some tips to follow:
-# check the current configuration
-containerd config dump
-
-# pull container image
-sudo ctr image pull docker.io/library/busybox:latest
-
-# create and run a container
-sudo ctr run --rm -t docker.io/library/busybox:latest test
-EOF
+    ensure_installed
   fi
 
   msg "done"
 }
 
 function current_version() {
-  local version="$VERSION"
-  if [[ -n $(which containerd) ]]; then
-    version="$(containerd -v | cut -d' ' -f3)"
+  local version=
+  if [[ -n $(which $NAME) ]]; then
+    version="$($NAME -v | cut -d' ' -f3)"
     version=${version#v}
   fi
   echo $version
@@ -287,15 +229,117 @@ function download_file() {
   local src="${1:?missing source url}"
   local dst="${2:?missing destination}"
 
-  msg "download: $src"
   if [[ -f "$dst" ]]; then
-    msg "already exist"
+    msg "already exist: $dst"
   else
+    msg "download: $src"
     local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
     $RUN curl -fsSL $src > $tmp
     $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+    msg "saved at: $dst"
   fi
-  msg "saved at: $dst"
+}
+
+function ensure_cached() {
+  msg "ensure files are cached"
+
+  local pkg_file="$NAME-$VERSION-$VARIANT.tar.gz"
+  local pkg_dir="$CACHE_PACKAGES/$NAME-$VERSION"
+  local pkg_dir_runc="$CACHE_PACKAGES/runc-$RUNC_VERSION"
+
+  mkdir -p $pkg_dir $pkg_dir_runc
+
+  if [[ $OFFLINE == "y" ]]; then
+    msg "WARNING: offline mode, cache must be ready"
+  else
+    local url="$(mirror_url $BASEURL)"
+    local url_runc="$(mirror_url $RUNC_BASEURL)"
+
+    download_file "$url/raw/main/$NAME.service" "$pkg_dir/$NAME.service"
+    download_file "$url/releases/download/v$VERSION/$pkg_file" "$pkg_dir/$pkg_file"
+    download_file "$url_runc/releases/download/v$RUNC_VERSION/runc.$ARCH" "$pkg_dir_runc/runc"
+  fi
+
+  msg "extract package to $CACHE_RUN"
+  tar xzf $pkg_dir/$pkg_file -C $CACHE_RUN
+}
+
+function ensure_installed() {
+  msg "ensure $NAME is installed"
+
+  local pkg_dir="$CACHE_PACKAGES/$NAME-$VERSION"
+  local pkg_dir_runc="$CACHE_PACKAGES/runc-$RUNC_VERSION"
+
+  if [[ -n $CUR_VER ]]; then
+    msg "version $CUR_VER has already installed"
+    if [[ $CUR_VER != $VERSION ]]; then
+      msg "WARNING: the installed version is not the target $VERSION"
+      msg "uninstall current version with following command and install again:"
+      msg "  $SELF -U"
+    fi
+  else
+    msg "install $NAME to $INSTALL_DIR_BIN"
+    $SUDO install -t $INSTALL_DIR_BIN $CACHE_RUN/bin/*
+    msg "create default config: $ETC_CFG"
+    $SUDO mkdir -p $(dirname $ETC_CFG)
+    $NAME config default | $SUDO tee $ETC_CFG >/dev/null
+
+    msg "create service config: $SVC_CFG"
+    $SUDO cp $pkg_dir/$NAME.service $SVC_BIN
+    $SUDO mkdir -p $(dirname $SVC_CFG)
+    cat <<EOF | $SUDO tee $SVC_CFG
+[Service]
+Environment="HTTP_PROXY=$http_proxy"
+Environment="HTTPS_PROXY=$https_proxy"
+Environment="NO_PROXY=$no_proxy"
+EOF
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable --now $NAME
+
+    msg "install runc"
+    $SUDO install -t $INSTALL_DIR_BIN $pkg_dir_runc/runc
+
+    cat <<EOF
+
+# here are some tips to follow:
+# check the current configuration
+containerd config dump
+
+# pull container image
+sudo ctr image pull docker.io/library/busybox:latest
+
+# create and run a container
+sudo ctr run --rm -t docker.io/library/busybox:latest test
+EOF
+  fi
+}
+
+function ensure_uninstalled() {
+  msg "ensure $NAME is uninstalled"
+
+  if [[ -n $CUR_VER ]]; then
+    msg "uninstall $NAME"
+    $SUDO systemctl stop $NAME || true
+    $SUDO rm -f $SVC_BIN
+    $SUDO systemctl daemon-reload
+    for f in $CACHE_RUN/bin/*; do
+      $SUDO rm -f $INSTALL_DIR_BIN/${f##*/}
+    done
+
+    msg "try to delete config files"
+    for f in $ETC_CFG $SVC_CFG; do
+      read -p "delete $f? y/N: " result
+      if [[ $result == "y" ]]; then
+        $SUDO rm -f $f
+        msg "deleted: $f"
+      fi
+    done
+
+    msg "uninstall runc"
+    $SUDO rm -f $INSTALL_DIR_BIN/runc
+  else
+    msg "already uninstalled"
+  fi
 }
 
 main "$@"
