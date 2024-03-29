@@ -15,7 +15,7 @@ if [[ $(id -u) == "0" ]]; then
 fi
 
 # details in https://istio.io/latest/docs/releases/supported-releases/
-VERSION="1.17.8"      # version to install
+VERSION="1.21.0"      # version to install
 CUR_VER=              # current version if any
 DRY_RUN=n             # print information only
 MIRROR="auto"         # mirror option
@@ -70,7 +70,7 @@ Examples:
      $SELF
 
   2. Install Istio with specific version
-     $SELF -v 1.19.3
+     $SELF -v 1.21.0
 
   3. Uninstall
      $SELF -U
