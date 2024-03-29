@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.06.14
+# version: 24.03.29
 
 set -e
 
 SELF="$(basename $0)"
 SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+NAME="${SELF#*-}"
 
 SUDO="sudo"
 if [[ $(id -u) == "0" ]]; then
   SUDO=""
 fi
 
-VERSION="3.10.0"      # version to install
+VERSION="3.14.2"      # version to install
+CUR_VER=              # current version if any
 DRY_RUN=n             # print information only
 MIRROR="auto"         # mirror option
 MIRRORS="yes no auto" # valid mirror options
@@ -21,12 +23,14 @@ OFFLINE=${OFFLINE:-n} # no external network
 
 BASEURL="https://get.helm.sh"
 BASEURL_MIRROR="https://mirrors.huaweicloud.com/helm"
-VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
 
-GCLOUD_TEST_URL="https://packages.cloud.google.com"        # google cloud url for test
+VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
+INSTALL_DIR_BIN="/usr/local/bin"
 
 CACHE="cache"
+CACHE_RUN="$CACHE/run/$SELF"
 CACHE_PACKAGES="$CACHE/packages/common"
+CACHE_DOWNLOADING="$CACHE/.download"
 
 function msg() {
   echo "> $@"
@@ -61,7 +65,7 @@ Examples:
      $SELF -U
 
   3. Install Helm with specific version
-     $SELF -v 3.12.0
+     $SELF -v 3.14.3
 
 Version: $SELF_VERSION
 EOF
@@ -69,8 +73,12 @@ EOF
 }
 
 function main() {
+  # ensure the right one is used
+  PATH=$INSTALL_DIR_BIN:$PATH
+
   # adjust default version if already deployed
-  VERSION="$(current_version)"
+  CUR_VER="$(current_version)"
+  VERSION="${CUR_VER:-$VERSION}"
 
   while getopts ":m:v:hnU" opt
   do
@@ -90,7 +98,7 @@ function main() {
   done
   shift $((OPTIND-1))
 
-  for v in CACHE DRY_RUN MIRROR UNINSTALL VERSION
+  for v in CACHE DRY_RUN MIRROR UNINSTALL VERSION CUR_VER
   do
     eval echo "$v: \${$v}"
   done
@@ -103,35 +111,28 @@ function main() {
   check_mirror
   ensure_workdir
 
-  local install_dir="/usr/local/bin"
-  local install_bin="/usr/local/bin/helm"
-  local package_dir="$CACHE_PACKAGES/helm-$VERSION"
-  local package_bin="$package_dir/helm"
+  local package_dir="$CACHE_PACKAGES/$NAME-$VERSION"
+  local package_file="$NAME-v$VERSION-$VARIANT.tar.gz"
 
   mkdir -p $package_dir
 
-  if [[ ! -e "$package_bin" ]]; then
-    if [[ $OFFLINE == "y" ]]; then
-      msg "WARNING: offline mode, cache must be ready"
-      msg "try to install from the cache"
-    else
-      local base_url="$BASEURL"
-      local file="helm-v$VERSION-$VARIANT.tar.gz"
-      if [[ $NEED_MIRROR == "y" ]]; then
-        base_url="$BASEURL_MIRROR/v$VERSION"
-      fi
-      msg "download $base_url/$file -> $package_dir"
-      curl -L $base_url/$file | tar xz -C $package_dir --strip-components=1
+  if [[ $OFFLINE == "y" ]]; then
+    msg "WARNING: offline mode, cache must be ready"
+  else
+    local baseurl="$BASEURL"
+    if [[ $USE_MIRROR = "y" ]]; then
+      baseurl="$BASEURL_MIRROR/v$VERSION"
     fi
+    download_file $baseurl/$package_file $package_dir/$package_file
   fi
+  tar xzf $package_dir/$package_file -C $CACHE_RUN --strip-components=1
 
   if [[ $UNINSTALL == "y" ]]; then
-    msg "uninstall helm"
-    $SUDO rm -f $install_bin
+    msg "uninstall $NAME"
+    $SUDO rm -f $INSTALL_DIR_BIN/$NAME
   else
-    msg "install helm"
-    $SUDO install $package_bin $install_bin
-  fi
+    msg "install $NAME"
+    $SUDO install $CACHE_RUN/$NAME $INSTALL_DIR_BIN/$NAME
 
   cat <<EOF
 
@@ -145,14 +146,15 @@ helm show chart bitnami/nginx
 helm upgrade -i nginx bitnami/nginx
 helm uninstall nginx
 EOF
+  fi
 
   echo "done"
 }
 
 function current_version() {
-  local version="$VERSION"
-  if [[ -n $(which helm) ]]; then
-    version="$(helm version --template '{{.Version}}')"
+  local version=
+  if [[ -n $(which $NAME) ]]; then
+    version="$($NAME version --template '{{.Version}}')"
     version=${version#v}
   fi
   echo $version
@@ -173,8 +175,13 @@ function check_prerequisites() {
   fi
   if ! kubectl version >/dev/null 2>&1; then
     err "can't access k8s cluster"
-    msg "WARNING: helm will not work without k8s cluster!"
+    msg "WARNING: $NAME will not work without k8s cluster!"
   fi
+}
+
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
 }
 
 function check_network() {
@@ -188,17 +195,17 @@ function check_network() {
   msg "offline mode: $OFFLINE"
 }
 
-NEED_MIRROR=n
+USE_MIRROR=n
 function check_mirror() {
-  msg "is mirror needed"
+  msg "use mirror or not"
   if [[ $MIRROR == "auto" ]]; then
     MIRROR=yes # default as needed
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
-      msg "check whether we can access google cloud"
-      local target="$GCLOUD_TEST_URL"
-      if curl -s -m 5 $target >/dev/null 2>&1; then
+      msg "check whether we can access $BASEURL"
+      local target="$BASEURL"
+      if can_access $target; then
         msg "curl $target is OK"
         MIRROR=no
       else
@@ -207,20 +214,40 @@ function check_mirror() {
     fi
   fi
   if [[ $MIRROR == "yes" ]]; then
-    NEED_MIRROR=y
+    msg "mirror is needed"
+    if can_access $BASEURL_MIRROR; then
+      USE_MIRROR="y"
+    else
+      err "failed to access mirror ($BASEURL_MIRROR)"
+    fi
   fi
-  msg "need mirror: $NEED_MIRROR"
+  msg "use mirror: $USE_MIRROR"
 }
 
 function ensure_workdir() {
   msg "ensure workdir"
 
-  for d in $CACHE_PACKAGES; do
+  for d in $CACHE_PACKAGES $CACHE_RUN $CACHE_DOWNLOADING; do
     if [[ ! -d $d ]]; then
       msg "create dir: $d"
       mkdir -p $d
     fi
   done
+}
+
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  if [[ -f "$dst" ]]; then
+    msg "already exist: $dst"
+  else
+    msg "download: $src"
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+    msg "saved at: $dst"
+  fi
 }
 
 main "$@"
