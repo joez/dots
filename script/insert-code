@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 24.03.24
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  # only run this when the script is executed, not sourced
+  if [[ -z $1 || $1 == "-h" || $1 == "--help" ]]; then
+    cat <<EOF && exit
+Usage: $(basename $0) [-h] <target>...
+
+  Insert code snippets into the target scripts by placeholders
+
+  It searches for placeholders to indicate which package of code to insert.
+  The format is as following:
+
+# @PACKAGE {
+...
+# @PACKAGE }
+
+  The "PACKAGE" is the package name of the code, the "..." represents the
+  contents to be inserted, which are the code in the package, they will be
+  replaced on every invocation.
+
+  You can have arbitrary number of placeholders as you wish.
+
+Version: $(sed -n '1,4s/# version: \(.*\)/\1/p' $0)
+EOF
+  fi
+
+  # let the Perl roll!
+  perl - "$0" "$@" <<'EOP'
+use strict;
+
+my $src = shift or die;
+my $all = do { local(@ARGV, $/) = $src; <> };
+
+my $pkg = {};
+(undef, my @segs) = split /^#\s*@@\s*(.+?)\s*\r?\n/m, $all;
+while (@segs) {
+  my ($name, $data) = splice @segs, 0, 2;
+  $pkg->{$name} = $data;
+}
+
+my @stack = ();
+for my $f (@ARGV) {
+  print "processing: $f\n";
+  local $^I   = '.bak';
+  local @ARGV = ($f);
+  while (<>) {
+    if (/^#\s*@\s*(.+?)\s*\{\s*$/) {
+      push @stack, $1 and print;
+    } elsif (/^#\s*@\s*(.+?)\s*\}\s*$/) {
+      my $line = $_;
+      my $name = pop @stack;
+      if ($1 ne $name) {
+        die qq/mismatching package "$1", should be "$name"/;
+      } else {
+        if (defined $pkg->{$name}) {
+          print "# AUTO-GENERATED, DO NOT EDIT!\n\n";
+          print $pkg->{$name};
+        } else {
+          print "# WARNING: no package found\n\n";
+        }
+        print $line;
+      }
+    } else {
+      print unless @stack;
+    }
+  }
+  die "no matching packages: @stack\n" if @stack;
+}
+EOP
+
+  # mission completed
+  exit
+fi
+
+# all the functions can be imported
+# separated by header matching regex: ^#\s*@@(.+?)\s*$
+# "(.+)" will be the package name
+
+# @@ self
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+# @@ base
+
+function msg {
+  echo "> $@"
+}
+
+function err {
+  echo "> $@" >&2
+}
+
+function has() {
+  [[ -z "${1##*$2*}" ]] && [[ -z "$2" || -n "$1" ]]
+}
+
+# @@ dry-run
+
+DRY_RUN="${DRY_RUN:-n}" # "y" to enable
+RUN=''                  # command prefix for dry run
+if [[ $DRY_RUN == 'y' ]]; then
+  RUN='echo'
+fi
+
+# @@ sudo
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+# @@ network
+
+OFFLINE="${OFFLINE:-n}"
+MIRROR="${MIRROR:-auto}"
+USE_MIRROR="${USE_MIRROR:-n}"
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"
+GITHUB_RAW="https://raw.githubusercontent.com"
+
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! can_access example.com; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+function check_mirror() {
+  msg "use mirror or not"
+  if [[ $MIRROR == "auto" ]]; then
+    MIRROR=yes # default as needed
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
+    else
+      msg "check whether we can access github"
+      local target="$GITHUB_RAW"
+      if can_access $target; then
+        msg "curl $target is OK"
+        MIRROR=no
+      else
+        msg "curl $target is FAILED"
+      fi
+    fi
+  fi
+  if [[ $MIRROR == "yes" ]]; then
+    msg "mirror is needed"
+    if can_access $MIRROR_URL; then
+      USE_MIRROR="y"
+    else
+      err "failed to access mirror ($MIRROR_URL)"
+    fi
+  fi
+  msg "use mirror: $USE_MIRROR"
+}
+
+function mirror_url() {
+  local origin="${1:?argument missing}"
+
+  if [[ $USE_MIRROR = "y" ]]; then
+    echo -n "$MIRROR_URL/$origin"
+  else
+    echo -n "$origin"
+  fi
+}
+
+# @@ cache
+
+CACHE="${CACHE:-cache}"
+CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}"
+CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"
+CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}"
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN $CACHE_DOWNLOADING; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  if [[ -f "$dst" ]]; then
+    msg "already exist: $dst"
+  else
+    msg "download: $src"
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+    msg "saved at: $dst"
+  fi
+}
+
