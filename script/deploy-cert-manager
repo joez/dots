@@ -14,7 +14,7 @@ if [[ $(id -u) == "0" ]]; then
   SUDO=""
 fi
 
-VERSION="1.12.6"      # version to deploy, check https://cert-manager.io/docs/releases/
+VERSION="1.12.9"      # version to deploy, check https://cert-manager.io/docs/releases/
 CUR_VER=              # current version if any
 DRY_RUN=n             # print information only
 MIRROR="auto"         # mirror option
