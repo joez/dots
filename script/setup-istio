@@ -208,7 +208,7 @@ function can_access() {
 function check_network() {
   msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
-    if ! curl -s -m 3 -I example.com >/dev/null; then
+    if ! can_access example.com; then
       msg "can't access external network"
       OFFLINE="y"
     fi
