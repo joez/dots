@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.12.02
+# version: 24.03.30
 
 set -e
 
@@ -9,6 +9,7 @@ SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 NAME="${SELF#*-}"
 
 VERSION="0.14.3"      # version to deploy
+CUR_VER=              # current version if any
 DRY_RUN=n             # print information only
 MIRROR="auto"         # mirror option
 MIRRORS="yes no auto" # valid mirror options
@@ -18,15 +19,16 @@ OFFLINE=${OFFLINE:-n} # no external network
 
 REPO_URL="https://github.com/kubernetes-sigs/node-feature-discovery"
 MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"
-GCLOUD_URL="https://packages.cloud.google.com"        # google cloud url for test
+GITHUB_RAW="https://raw.githubusercontent.com"    # github raw content base url
 
 TIMEOUT="300s"
 NAMESPACE="node-feature-discovery"
 
 CACHE="cache"
-CACHE_MANIFESTS="$CACHE/manifests"
-CACHE_PACKAGES="$CACHE/packages/common"
 CACHE_RUN="$CACHE/run/$SELF"
+CACHE_PACKAGES="$CACHE/packages/common"
+CACHE_MANIFESTS="$CACHE/manifests"
+CACHE_DOWNLOADING="$CACHE/.download"
 
 function msg() {
   echo "> $@"
@@ -88,8 +90,8 @@ function current_version() {
 
 function main() {
   # adjust default version if already deployed
-  local deployed="$(current_version)"
-  VERSION="${deployed:-$VERSION}"
+  local CUR_VER="$(current_version)"
+  VERSION="${CUR_VER:-$VERSION}"
 
   while getopts ":m:v:hnRU" opt
   do
@@ -110,12 +112,10 @@ function main() {
   done
   shift $((OPTIND-1))
 
-  for v in CACHE DRY_RUN MIRROR MIRROR_URL OFFLINE RESET UNINSTALL VERSION
+  for v in CACHE DRY_RUN MIRROR MIRROR_URL OFFLINE RESET UNINSTALL VERSION CUR_VER
   do
     eval echo "$v: \${$v}"
   done
-
-  msg "deployed version: $deployed"
 
   [[ $DRY_RUN == "y" ]] && exit
 
@@ -134,19 +134,11 @@ function main() {
   mkdir -p $package_dir $manifest_dir
 
   msg "download package"
-  if [[ ! -e "$package_path" ]]; then
-    if [[ $OFFLINE == "y" ]]; then
-      err "no cache found: $package_path"
-      exit 1
-    else
-      local base_url="$REPO_URL"
-      if [[ $NEED_MIRROR == "y" ]]; then
-        base_url="$MIRROR_URL/$REPO_URL"
-      fi
-      local package_url="$base_url/archive/refs/tags/$package_file"
-      msg "download $package_url -> $package_path"
-      curl -L $package_url > $package_path
-    fi
+  if [[ $OFFLINE == "y" ]]; then
+    msg "WARNING: offline mode, cache must be ready"
+  else
+    local url="$REPO_URL/archive/refs/tags/$package_file"
+    download_file "$(mirror_url $url)" "$package_path"
   fi
 
   msg "prepare manifest"
@@ -158,7 +150,7 @@ function main() {
   if [[ $RESET == "y" ]]; then
     msg "delete $NAME deployment (if any)"
     kubectl delete --ignore-not-found -k "$manifest_dir_deploy/overlays/default"
-    if [[ -n "$deployed" ]]; then
+    if [[ -n "$CUR_VER" ]]; then
       msg "remove $NAME-related node labels"
       local prune="$manifest_dir_deploy/overlays/prune"
       kubectl apply -k "$prune"
@@ -208,10 +200,15 @@ function check_prerequisites() {
   fi
 }
 
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
+}
+
 function check_network() {
   msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
-    if ! curl -s -m 3 -I example.com >/dev/null; then
+    if ! can_access example.com; then
       msg "can't access external network"
       OFFLINE="y"
     fi
@@ -219,17 +216,17 @@ function check_network() {
   msg "offline mode: $OFFLINE"
 }
 
-NEED_MIRROR=n
+USE_MIRROR=n
 function check_mirror() {
-  msg "is mirror needed"
+  msg "use mirror or not"
   if [[ $MIRROR == "auto" ]]; then
     MIRROR=yes # default as needed
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
-      msg "check whether we can access google cloud"
-      local target="$GCLOUD_URL"
-      if curl -s -m 5 $target >/dev/null 2>&1; then
+      msg "check whether we can access github"
+      local target="$GITHUB_RAW"
+      if can_access $target; then
         msg "curl $target is OK"
         MIRROR=no
       else
@@ -238,20 +235,50 @@ function check_mirror() {
     fi
   fi
   if [[ $MIRROR == "yes" ]]; then
-    NEED_MIRROR=y
+    msg "mirror is needed"
+    if can_access $MIRROR_URL; then
+      USE_MIRROR="y"
+    else
+      err "failed to access mirror ($MIRROR_URL)"
+    fi
   fi
-  msg "need mirror: $NEED_MIRROR"
+  msg "use mirror: $USE_MIRROR"
+}
+
+function mirror_url() {
+  local origin="${1:?argument missing}"
+
+  if [[ $USE_MIRROR = "y" ]]; then
+    echo -n "$MIRROR_URL/$origin"
+  else
+    echo -n "$origin"
+  fi
 }
 
 function ensure_workdir() {
   msg "ensure workdir"
 
-  for d in $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN; do
+  for d in $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN $CACHE_DOWNLOADING; do
     if [[ ! -d $d ]]; then
       msg "create dir: $d"
       mkdir -p $d
     fi
   done
+}
+
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  if [[ -f "$dst" ]]; then
+    msg "already exist: $dst"
+  else
+    msg "download: $src"
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+    msg "saved at: $dst"
+  fi
 }
 
 main "$@"
