@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.24
+# version: 24.03.31
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # only run this when the script is executed, not sourced
@@ -40,6 +40,7 @@ while (@segs) {
   my ($name, $data) = splice @segs, 0, 2;
   $pkg->{$name} = $data;
 }
+print "supported packages: ", join(', ', sort keys %$pkg), "\n";
 
 my @stack = ();
 for my $f (@ARGV) {
@@ -75,8 +76,8 @@ EOP
   exit
 fi
 
-# all the functions can be imported
-# separated by header matching regex: ^#\s*@@(.+?)\s*$
+# all the functions can be inserted
+# separated by header matching regex: ^#\s*@@\s*(.+?)\s*$
 # "(.+)" will be the package name
 
 # @@ self
@@ -100,8 +101,8 @@ function has() {
 
 # @@ dry-run
 
-DRY_RUN="${DRY_RUN:-n}" # "y" to enable
-RUN=''                  # command prefix for dry run
+DRY_RUN="${DRY_RUN:-n}"        # "y" to enable
+RUN=''                         # command prefix for dry run
 if [[ $DRY_RUN == 'y' ]]; then
   RUN='echo'
 fi
@@ -122,11 +123,12 @@ function validate_sudo() {
 
 # @@ network
 
-OFFLINE="${OFFLINE:-n}"
-MIRROR="${MIRROR:-auto}"
-USE_MIRROR="${USE_MIRROR:-n}"
-MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"
-GITHUB_RAW="https://raw.githubusercontent.com"
+OFFLINE="${OFFLINE:-n}"                           # no external network
+MIRROR="${MIRROR:-auto}"                          # mirror option to use
+MIRRORS="yes no auto"                             # valid mirror options
+USE_MIRROR="${USE_MIRROR:-n}"                     # need to use mirror
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror or http proxy to use
+GITHUB_RAW="https://raw.githubusercontent.com"    # the key factor to use mirror
 
 # the target URL is reachable but the response may be 4xx or 5xx
 function can_access() {
@@ -184,16 +186,17 @@ function mirror_url() {
 
 # @@ cache
 
-CACHE="${CACHE:-cache}"
-CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"
-CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}"
-CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"
-CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}"
+CACHE="${CACHE:-cache}"                                    # the cache directory
+CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"                 # runtime generated files
+CACHE_IMAGES="${CACHE_IMAGES:-$CACHE/images}"              # exported container images
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}" # software packages, e.g. .deb, .tar.gz
+CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"     # manifest files in YAML format
+CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}" # temporary directory for downloading
 
 function ensure_workdir() {
   msg "ensure workdir"
 
-  for d in $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN $CACHE_DOWNLOADING; do
+  for d in $CACHE_RUN $CACHE_IMAGES $CACHE_PACKAGES $CACHE_MANIFESTS $CACHE_DOWNLOADING; do
     if [[ ! -d $d ]]; then
       msg "create dir: $d"
       mkdir -p $d
