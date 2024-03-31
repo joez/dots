@@ -1,49 +1,50 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.06.09
+# version: 24.03.31
 
 set -e
+
+# @self {
+# AUTO-GENERATED, DO NOT EDIT!
 
 SELF="$(basename $0)"
 SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 
-SUDO="sudo"
-if [[ $(id -u) == "0" ]]; then
-  SUDO=""
-fi
+# @self }
+NAME="${SELF#*-}"
+NAME_CTL="virtctl"
 
 VERSION="0.58.0"      # version to deploy
-DRY_RUN=n             # print information only
 RESET=n               # reset the deployment
 UNINSTALL=n           # reset the deployment and uninstall components
-OFFLINE=${OFFLINE:-n} # no external network
 
-BASEURL="https://github.com/kubevirt/kubevirt"
+REPO_URL="https://github.com/kubevirt/kubevirt"
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
+INSTALL_DIR_BIN="/usr/local/bin"
+
 TIMEOUT="300s"
 
 CDI_VERSION="${CDI_VERSION:-1.56.0}"
-CDI_BASEURL="https://github.com/kubevirt/containerized-data-importer"
+CDI_REPO_URL="https://github.com/kubevirt/containerized-data-importer"
 
-CACHE="cache"
-CACHE_MANIFESTS="$CACHE/manifests"
-CACHE_PACKAGES="$CACHE/packages/common"
-CACHE_RUN="$CACHE/run/$SELF"
+# @dry-run {
+# AUTO-GENERATED, DO NOT EDIT!
 
-function msg() {
-  echo "> $@"
-}
+DRY_RUN="${DRY_RUN:-n}"        # "y" to enable
+RUN=''                         # command prefix for dry run
+if [[ $DRY_RUN == 'y' ]]; then
+  RUN='echo'
+fi
 
-function err() {
-  echo "> $@" >&2
-}
+# @dry-run }
 
 function usage() {
   cat <<EOF
-Usage: $SELF [-v <ver>] [-R] [-U] [-n] [-h]
+Usage: $SELF [-m <type>] [-v <ver>] [-R] [-U] [-n] [-h]
 
   Deploy KubeVirt in Kubernetes cluster the easy way
 
+  -m <type>: use mirror [$MIRRORS], default: $MIRROR
   -v <ver>:  target version, default: $VERSION
   -R:        reset the deployment, default: $RESET
   -U:        reset the deployment and uninstall components, default: $UNINSTALL
@@ -54,6 +55,11 @@ Cache:
 
   To speed up deployment, the required files will be cached at "$CACHE"
 
+Environment variables:
+
+  MIRROR_URL:  mirror to use, default: $MIRROR_URL
+  OFFLINE:     force into offline mode [y n], default: $OFFLINE
+
 Examples:
 
   1. Deploy KubeVirt
@@ -63,7 +69,7 @@ Examples:
      $SELF -R
 
   3. Deploy KubeVirt with specific version
-     $SELF -v 0.59.0
+     $SELF -v $VERSION
 
   4. Reset the deployment and uninstall
      $SELF -U
@@ -74,9 +80,9 @@ EOF
 }
 
 function current_version() {
-  local version="$VERSION"
-  if [[ -n $(which virtctl) ]]; then
-    version="$(virtctl version | head -n1 | sed -n 's/.*GitVersion:"\([^"]*\).*/\1/p')"
+  local version=
+  if [[ -n $(which $NAME_CTL) ]]; then
+    version="$($NAME_CTL version | head -n1 | sed -n 's/.*GitVersion:"\([^"]*\).*/\1/p')"
     version=${version#v}
   fi
   echo $version
@@ -84,22 +90,29 @@ function current_version() {
 
 function main() {
   # adjust default version if already deployed
-  VERSION="$(current_version)"
+  CUR_VER="$(current_version)"
+  VERSION="${CUR_VER:-$VERSION}"
 
-  while getopts ":v:hnRU" opt
+  while getopts ":m:v:hnRU" opt
   do
     case $opt in
+      m ) MIRROR=$OPTARG
+          if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
+            err "invalid mirror option $MIRROR"
+            usage && exit 1
+          fi
+          ;;
       v ) VERSION=${OPTARG#v};;
       R ) RESET=y;;
       U ) RESET=y && UNINSTALL=y;;
-      n ) DRY_RUN=y;;
+      n ) DRY_RUN=y && RUN='echo';;
       h ) usage && exit;;
       * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
     esac
   done
   shift $((OPTIND-1))
 
-  for v in CACHE CDI_VERSION DRY_RUN RESET UNINSTALL VERSION
+  for v in CACHE DRY_RUN MIRROR MIRROR_URL OFFLINE RESET UNINSTALL VERSION CUR_VER CDI_VERSION
   do
     eval echo "$v: \${$v}"
   done
@@ -109,56 +122,51 @@ function main() {
   validate_sudo
   check_prerequisites
   check_network
+  check_mirror
   ensure_workdir
 
-  local manifest_list="kubevirt-operator.yaml kubevirt-cr.yaml"
   local manifest_dir="$CACHE_MANIFESTS/kubevirt-$VERSION"
-  local manifest_list_cdi="cdi-operator.yaml cdi-cr.yaml"
-  local manifest_dir_cdi="$CACHE_MANIFESTS/cdi-$CDI_VERSION"
-  local package_list="virtctl"
+  local manifest_list="kubevirt-operator.yaml kubevirt-cr.yaml"
+  local cdi_manifest_dir="$CACHE_MANIFESTS/cdi-$CDI_VERSION"
+  local cdi_manifest_list="cdi-operator.yaml cdi-cr.yaml"
+  local demo_manifest_dir="$cdi_manifest_dir/demo"
   local package_dir="$CACHE_PACKAGES/kubevirt-$VERSION"
-  local install_dir="/usr/local/bin"
+  local package_list="$NAME_CTL"
 
-  mkdir -p $manifest_dir $manifest_dir_cdi $package_dir
+  mkdir -p $manifest_dir $cdi_manifest_dir $demo_manifest_dir $package_dir
 
-  msg "download manifests"
-  for n in $manifest_list; do
-    local f=$manifest_dir/$n
-    if [[ ! -e "$f" ]]; then
-      msg "download $n -> $f"
-      curl -L $BASEURL/releases/download/v$VERSION/$n > $f
-    fi
-  done
+  if [[ $OFFLINE == "y" ]]; then
+    msg "WARNING: offline mode, cache must be ready"
+  else
+    msg "download manifests"
+    for n in $manifest_list; do
+      local u="$REPO_URL/releases/download/v$VERSION/$n"
+      download_file "$(mirror_url $u)" "$manifest_dir/$n"
+    done
+    for n in $cdi_manifest_list; do
+      local u="$CDI_REPO_URL/releases/download/v$CDI_VERSION/$n"
+      download_file "$(mirror_url $u)" "$cdi_manifest_dir/$n"
+    done
 
-  for n in $manifest_list_cdi; do
-    local f=$manifest_dir_cdi/$n
-    if [[ ! -e "$f" ]]; then
-      msg "download $n -> $f"
-      curl -L $CDI_BASEURL/releases/download/v$CDI_VERSION/$n > $f
-    fi
-  done
-
-  local LABS_BASE="https://kubevirt.io/labs/manifests"
-  for n in vm.yaml; do
-    local f=$CACHE_RUN/$n
-    if [[ ! -e "$f" ]]; then
-      msg "download $n -> $f"
-      curl -L $LABS_BASE/$n > $f
-    fi
-  done
-  local CDI_DEMO_LIST="registry-image-datavolume.yaml import-kubevirt-datavolume.yaml \
-                       import-block-pv.yaml clone-datavolume.yaml vm-dv.yaml"
-  for n in $CDI_DEMO_LIST; do
-    local f=$CACHE_RUN/$n
-    if [[ ! -e "$f" ]]; then
-      msg "download $n -> $f"
-      curl -L $CDI_BASEURL/raw/v$CDI_VERSION/manifests/example/$n > $f
-    fi
+    msg "download manifests for demo"
+    for n in vm.yaml; do
+      local u="https://kubevirt.io/labs/manifests/$n"
+      download_file "$(mirror_url $u)" "$demo_manifest_dir/$n"
+    done
+    for n in registry-image-datavolume.yaml import-kubevirt-datavolume.yaml \
+             import-block-pv.yaml clone-datavolume.yaml vm-dv.yaml; do
+      local u="$CDI_REPO_URL/raw/v$CDI_VERSION/manifests/example/$n"
+      download_file "$(mirror_url $u)" "$demo_manifest_dir/$n"
+    done
     # use the default storage class
-    if [[ $n == "vm-dv.yaml" ]]; then
-      sed -i '/storageClassName:/d' $f
-    fi
-  done
+    sed -i '/storageClassName:/d' "$demo_manifest_dir/vm-dv.yaml"
+
+    msg "download packages"
+    for n in $package_list; do
+      local u="$REPO_URL/releases/download/v$VERSION/$n-v$VERSION-$VARIANT"
+      download_file "$(mirror_url $u)" "$package_dir/$n"
+    done
+  fi
 
   if [[ $RESET == "y" ]]; then
     # https://kubevirt.io/user-guide/operations/updating_and_deletion/#deleting-kubevirt
@@ -172,7 +180,7 @@ function main() {
     $kd -f $manifest_dir/kubevirt-operator.yaml
     msg "delete cdi deployment (if any)"
     $kd cdi cdi --wait=true || true
-    $kd -f $manifest_dir_cdi/
+    $kd -f $cdi_manifest_dir/
   else
     msg "deploy kubevirt"
     for n in $manifest_list; do
@@ -181,28 +189,20 @@ function main() {
       kubectl apply -f $f
     done
     msg "deploy cdi"
-    for n in $manifest_list_cdi; do
-      local f=$manifest_dir_cdi/$n
+    for n in $cdi_manifest_list; do
+      local f=$cdi_manifest_dir/$n
       msg "apply $f"
       kubectl apply -f $f
     done
   fi
 
   for n in $package_list; do
-    local f=$package_dir/$n
-
-    if [[ ! -e "$f" ]]; then
-      msg "download $n -> $f"
-      curl -L $BASEURL/releases/download/v$VERSION/$n-v$VERSION-$VARIANT > $f
-      chmod a+x $f
-    fi
-
     if [[ $UNINSTALL == "y" ]]; then
       msg "uninstall $n"
-      $SUDO rm -f $install_dir/$n
+      $SUDO rm -f $INSTALL_DIR_BIN/$n
     else
       msg "install $n"
-      $SUDO install $f $install_dir
+      $SUDO install $package_dir/$n $INSTALL_DIR_BIN
     fi
   done
 
@@ -215,28 +215,26 @@ function main() {
 # here are some tips to follow:
 # configure
 kubectl edit cdi/cdi
+
 # deploy a sample VM
-# see other samples in $CACHE_RUN
-kubectl apply -f $CACHE_RUN/vm.yaml
+# see other samples in $demo_manifest_dir
+kubectl apply -f $demo_manifest_dir/vm.yaml
+
 # get the deployed VM
 kubectl get vms
+
 # start the VM
 virtctl start testvm
+
 # check instance status
 kubectl get vmis
+
 # access console
 virtctl console testvm
 EOF
   fi
 
   msg "done"
-}
-
-function validate_sudo() {
-  if [[ -n $SUDO ]]; then
-    msg "validate sudo"
-    sudo -v
-  fi
 }
 
 function check_prerequisites() {
@@ -255,10 +253,59 @@ function check_prerequisites() {
   fi
 }
 
+# @base {
+# AUTO-GENERATED, DO NOT EDIT!
+
+function msg {
+  echo "> $@"
+}
+
+function err {
+  echo "> $@" >&2
+}
+
+function has() {
+  [[ -z "${1##*$2*}" ]] && [[ -z "$2" || -n "$1" ]]
+}
+
+# @base }
+
+# @sudo {
+# AUTO-GENERATED, DO NOT EDIT!
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+# @sudo }
+
+# @network {
+# AUTO-GENERATED, DO NOT EDIT!
+
+OFFLINE="${OFFLINE:-n}"                           # no external network
+MIRROR="${MIRROR:-auto}"                          # mirror option to use
+MIRRORS="yes no auto"                             # valid mirror options
+USE_MIRROR="${USE_MIRROR:-n}"                     # need to use mirror
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror or http proxy to use
+GITHUB_RAW="https://raw.githubusercontent.com"    # the key factor to use mirror
+
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
+}
+
 function check_network() {
   msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
-    if ! curl -s -m 3 -I example.com >/dev/null; then
+    if ! can_access example.com; then
       msg "can't access external network"
       OFFLINE="y"
     fi
@@ -266,15 +313,82 @@ function check_network() {
   msg "offline mode: $OFFLINE"
 }
 
+function check_mirror() {
+  msg "use mirror or not"
+  if [[ $MIRROR == "auto" ]]; then
+    MIRROR=yes # default as needed
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
+    else
+      msg "check whether we can access github"
+      local target="$GITHUB_RAW"
+      if can_access $target; then
+        msg "curl $target is OK"
+        MIRROR=no
+      else
+        msg "curl $target is FAILED"
+      fi
+    fi
+  fi
+  if [[ $MIRROR == "yes" ]]; then
+    msg "mirror is needed"
+    if can_access $MIRROR_URL; then
+      USE_MIRROR="y"
+    else
+      err "failed to access mirror ($MIRROR_URL)"
+    fi
+  fi
+  msg "use mirror: $USE_MIRROR"
+}
+
+function mirror_url() {
+  local origin="${1:?argument missing}"
+
+  if [[ $USE_MIRROR = "y" ]]; then
+    echo -n "$MIRROR_URL/$origin"
+  else
+    echo -n "$origin"
+  fi
+}
+
+# @network }
+
+# @cache {
+# AUTO-GENERATED, DO NOT EDIT!
+
+CACHE="${CACHE:-cache}"                                    # the cache directory
+CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"                 # runtime generated files
+CACHE_IMAGES="${CACHE_IMAGES:-$CACHE/images}"              # exported container images
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}" # software packages, e.g. .deb, .tar.gz
+CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"     # manifest files in YAML format
+CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}" # temporary directory for downloading
+
 function ensure_workdir() {
   msg "ensure workdir"
 
-  for d in $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN; do
+  for d in $CACHE_RUN $CACHE_IMAGES $CACHE_PACKAGES $CACHE_MANIFESTS $CACHE_DOWNLOADING; do
     if [[ ! -d $d ]]; then
       msg "create dir: $d"
       mkdir -p $d
     fi
   done
 }
+
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  if [[ -f "$dst" ]]; then
+    msg "already exist: $dst"
+  else
+    msg "download: $src"
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+    msg "saved at: $dst"
+  fi
+}
+
+# @cache }
 
 main "$@"
