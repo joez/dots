@@ -90,7 +90,7 @@ function current_version() {
 
 function main() {
   # adjust default version if already deployed
-  local CUR_VER="$(current_version)"
+  CUR_VER="$(current_version)"
   VERSION="${CUR_VER:-$VERSION}"
 
   while getopts ":m:v:hnRU" opt

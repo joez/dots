@@ -88,7 +88,7 @@ function current_version() {
 
 function main() {
   # adjust default version if already deployed
-  local CUR_VER="$(current_version)"
+  CUR_VER="$(current_version)"
   VERSION="${CUR_VER:-$VERSION}"
 
   while getopts ":m:v:hnRU" opt
@@ -144,7 +144,7 @@ function main() {
       local f="$n-$VARIANT.tar.gz"
       local u="$REPO_URL/releases/download/v$VERSION/$f"
       download_file "$(mirror_url $u)" "$package_dir/$f"
-  done
+    done
   fi
 
   msg "extract packages to $CACHE_RUN"
