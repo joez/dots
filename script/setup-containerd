@@ -1,25 +1,21 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.28
+# version: 24.03.31
 
 set -e
 
+# @self {
+# AUTO-GENERATED, DO NOT EDIT!
+
 SELF="$(basename $0)"
 SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
-NAME="${SELF#*-}"
 
-SUDO="sudo"
-if [[ $(id -u) == "0" ]]; then
-  SUDO=""
-fi
+# @self }
+NAME="${SELF#*-}"
 
 VERSION="1.7.14"      # version to install
 CUR_VER=              # current version if any
-DRY_RUN=n             # print information only
-MIRROR="auto"         # mirror option
-MIRRORS="yes no auto" # valid mirror options
 UNINSTALL=n           # reset the deployment and uninstall components
-OFFLINE=${OFFLINE:-n} # no external network
 
 ARCH="$(uname -m | sed 's/x86_64/amd64/')"
 VARIANT="$(uname -s | tr A-Z a-z)-$ARCH"
@@ -31,24 +27,20 @@ SVC_BIN="$INSTALL_DIR_SVC/$NAME.service"
 SVC_CFG="$INSTALL_DIR_CFG/$NAME.service.d/http-proxy.conf"
 
 BASEURL="https://github.com/containerd/containerd"
-GITHUB_RAW="https://raw.githubusercontent.com"    # github raw content base url
-MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror to use for github
 
 RUNC_VERSION="${RUNC_VERSION:-1.1.12}"
 RUNC_BASEURL="https://github.com/opencontainers/runc"
 
-CACHE="cache"
-CACHE_RUN="$CACHE/run/$SELF"
-CACHE_PACKAGES="$CACHE/packages/common"
-CACHE_DOWNLOADING="$CACHE/.download"
+# @dry-run {
+# AUTO-GENERATED, DO NOT EDIT!
 
-function msg() {
-  echo "> $@"
-}
+DRY_RUN="${DRY_RUN:-n}"        # "y" to enable
+RUN=''                         # command prefix for dry run
+if [[ $DRY_RUN == 'y' ]]; then
+  RUN='echo'
+fi
 
-function err() {
-  echo "> $@" >&2
-}
+# @dry-run }
 
 function usage() {
   cat <<EOF
@@ -67,6 +59,7 @@ Cache:
   To speed up deployment, the required files will be cached at "$CACHE"
 
 Environment variables:
+
   MIRROR_URL:    mirror to use for GitHub, default: $MIRROR_URL
   OFFLINE:       force into offline mode [y n], default: $OFFLINE
   RUNC_VERSION:  version of runc, default: $RUNC_VERSION
@@ -106,7 +99,7 @@ function main() {
           ;;
       v ) VERSION=${OPTARG#v};;
       U ) UNINSTALL=y;;
-      n ) DRY_RUN=y;;
+      n ) DRY_RUN=y && RUN='echo';;
       h ) usage && exit;;
       * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
     esac
@@ -144,99 +137,11 @@ function current_version() {
   echo $version
 }
 
-function validate_sudo() {
-  if [[ -n $SUDO ]]; then
-    msg "validate sudo"
-    sudo -v
-  fi
-}
-
 function check_prerequisites() {
   msg "check prerequisites"
   if [[ -z $(which curl) ]]; then
     err "curl is not available"
     exit 1
-  fi
-}
-
-# the target URL is reachable but the response may be 4xx or 5xx
-function can_access() {
-   curl -IL -s -m 5 $1 >/dev/null 2>&1
-}
-
-function check_network() {
-  msg "check network"
-  if [[ $OFFLINE != 'y' ]]; then
-    if ! can_access example.com; then
-      msg "can't access external network"
-      OFFLINE="y"
-    fi
-  fi
-  msg "offline mode: $OFFLINE"
-}
-
-USE_MIRROR=n
-function check_mirror() {
-  msg "use mirror or not"
-  if [[ $MIRROR == "auto" ]]; then
-    MIRROR=yes # default as needed
-    if [[ $OFFLINE == "y" ]]; then
-      msg "offline mode, assume mirror is needed"
-    else
-      msg "check whether we can access github"
-      local target="$GITHUB_RAW"
-      if can_access $target; then
-        msg "curl $target is OK"
-        MIRROR=no
-      else
-        msg "curl $target is FAILED"
-      fi
-    fi
-  fi
-  if [[ $MIRROR == "yes" ]]; then
-    msg "mirror is needed"
-    if can_access $MIRROR_URL; then
-      USE_MIRROR="y"
-    else
-      err "failed to access mirror ($MIRROR_URL)"
-    fi
-  fi
-  msg "use mirror: $USE_MIRROR"
-}
-
-function mirror_url() {
-  local origin="${1:?argument missing}"
-
-  if [[ $USE_MIRROR = "y" ]]; then
-    echo -n "$MIRROR_URL/$origin"
-  else
-    echo -n "$origin"
-  fi
-}
-
-function ensure_workdir() {
-  msg "ensure workdir"
-
-  for d in $CACHE_RUN $CACHE_PACKAGES $CACHE_DOWNLOADING; do
-    if [[ ! -d $d ]]; then
-      msg "create dir: $d"
-      mkdir -p $d
-    fi
-  done
-}
-
-function download_file() {
-  local src="${1:?missing source url}"
-  local dst="${2:?missing destination}"
-
-  if [[ -f "$dst" ]]; then
-    msg "already exist: $dst"
-  else
-    msg "download: $src"
-    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
-    $RUN curl -fsSL $src > $tmp
-    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
-    msg "saved at: $dst"
   fi
 }
 
@@ -341,5 +246,143 @@ function ensure_uninstalled() {
     msg "already uninstalled"
   fi
 }
+
+# @base {
+# AUTO-GENERATED, DO NOT EDIT!
+
+function msg {
+  echo "> $@"
+}
+
+function err {
+  echo "> $@" >&2
+}
+
+function has() {
+  [[ -z "${1##*$2*}" ]] && [[ -z "$2" || -n "$1" ]]
+}
+
+# @base }
+
+# @sudo {
+# AUTO-GENERATED, DO NOT EDIT!
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+# @sudo }
+
+# @network {
+# AUTO-GENERATED, DO NOT EDIT!
+
+OFFLINE="${OFFLINE:-n}"                           # no external network
+MIRROR="${MIRROR:-auto}"                          # mirror option to use
+MIRRORS="yes no auto"                             # valid mirror options
+USE_MIRROR="${USE_MIRROR:-n}"                     # need to use mirror
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror or http proxy to use
+GITHUB_RAW="https://raw.githubusercontent.com"    # the key factor to use mirror
+
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! can_access example.com; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+function check_mirror() {
+  msg "use mirror or not"
+  if [[ $MIRROR == "auto" ]]; then
+    MIRROR=yes # default as needed
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
+    else
+      msg "check whether we can access github"
+      local target="$GITHUB_RAW"
+      if can_access $target; then
+        msg "curl $target is OK"
+        MIRROR=no
+      else
+        msg "curl $target is FAILED"
+      fi
+    fi
+  fi
+  if [[ $MIRROR == "yes" ]]; then
+    msg "mirror is needed"
+    if can_access $MIRROR_URL; then
+      USE_MIRROR="y"
+    else
+      err "failed to access mirror ($MIRROR_URL)"
+    fi
+  fi
+  msg "use mirror: $USE_MIRROR"
+}
+
+function mirror_url() {
+  local origin="${1:?argument missing}"
+
+  if [[ $USE_MIRROR = "y" ]]; then
+    echo -n "$MIRROR_URL/$origin"
+  else
+    echo -n "$origin"
+  fi
+}
+
+# @network }
+
+# @cache {
+# AUTO-GENERATED, DO NOT EDIT!
+
+CACHE="${CACHE:-cache}"                                    # the cache directory
+CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"                 # runtime generated files
+CACHE_IMAGES="${CACHE_IMAGES:-$CACHE/images}"              # exported container images
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}" # software packages, e.g. .deb, .tar.gz
+CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"     # manifest files in YAML format
+CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}" # temporary directory for downloading
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_RUN $CACHE_IMAGES $CACHE_PACKAGES $CACHE_MANIFESTS $CACHE_DOWNLOADING; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  if [[ -f "$dst" ]]; then
+    msg "already exist: $dst"
+  else
+    msg "download: $src"
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+    msg "saved at: $dst"
+  fi
+}
+
+# @cache }
 
 main "$@"
