@@ -65,7 +65,7 @@ Examples:
      $SELF -U
 
   3. Install Helm with specific version
-     $SELF -v 3.14.3
+     $SELF -v $VERSION
 
 Version: $SELF_VERSION
 EOF

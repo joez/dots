@@ -68,7 +68,7 @@ Examples:
      $SELF -R
 
   3. Deploy NFD with specific version
-     $SELF -v 0.14.0
+     $SELF -v $VERSION
 
   4. Reset the deployment and uninstall
      $SELF -U

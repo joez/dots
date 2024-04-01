@@ -73,7 +73,7 @@ Examples:
      $SELF -U
 
   3. Install $NAME with specific version
-     $SELF -v 1.7.14
+     $SELF -v $VERSION
 
 Version: $SELF_VERSION
 EOF

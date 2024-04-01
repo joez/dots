@@ -63,7 +63,7 @@ Examples:
      $SELF
 
   2. Install Istio with specific version
-     $SELF -v 1.21.0
+     $SELF -v $VERSION
 
   3. Uninstall
      $SELF -U
