@@ -1,16 +1,33 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.27
+# version: 24.04.01
 
 set -e
 
+# @self {
+# AUTO-GENERATED, DO NOT EDIT!
+
 SELF="$(basename $0)"
 SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+# @self }
+
+# @sudo {
+# AUTO-GENERATED, DO NOT EDIT!
 
 SUDO="sudo"
 if [[ $(id -u) == "0" ]]; then
   SUDO=""
 fi
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+# @sudo }
 
 DOCKER="$SUDO docker"
 if id -nG | grep -qw docker; then
@@ -21,10 +38,6 @@ PRIVATE_CIDR="127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8
 HOSTNAME="$(cat /proc/sys/kernel/hostname)"
 DIST="$(source /etc/os-release && echo $ID | tr '[:upper:]' '[:lower:]')"
 
-DRY_RUN="n"             # print information only
-MIRROR="auto"           # mirror option
-MIRRORS="yes no auto"   # valid mirror options
-OFFLINE="${OFFLINE:-n}" # no external network
 PORT_HTTP="912"
 PORT_HTTPS="912"
 PROXY_HOST=""
@@ -34,26 +47,27 @@ REGISTRY_MIRROR="${REGISTRY_MIRROR:-}"
 UNINSTALL=n             # uninstall completely
 VERSION="latest"        # version to install
 
-DOCKER_REPO="https://download.docker.com"
-DOCKER_MIRROR="${DOCKER_MIRROR:-https://mirrors.aliyun.com/docker-ce}"
+BASEURL="https://download.docker.com"
+MIRROR_URL="${MIRROR_URL:-https://mirrors.aliyun.com/docker-ce}"
+URL_TO_CHECK="$BASEURL"
+
 PKGS_ESSENTIAL="docker-ce docker-ce-cli containerd.io"     # DO NOT change the last one
 PKGS_OPTIONAL="docker-buildx-plugin docker-compose-plugin"
-
-CACHE="cache"
-CACHE_PACKAGES="$CACHE/packages"
-CACHE_RUN="$CACHE/run/$SELF"
 
 SERVICE_CONFIG="/etc/systemd/system/docker.service.d/http-proxy.conf"
 DOCKERD_CONFIG="/etc/docker/daemon.json"
 DOCKERC_CONFIG=~/.docker/config.json    # not quoted to expand tilde
 
-function msg() {
-  echo "> $@"
-}
+# @dry-run {
+# AUTO-GENERATED, DO NOT EDIT!
 
-function err() {
-  echo "> $@" >&2
-}
+DRY_RUN="${DRY_RUN:-n}"        # "y" to enable
+RUN=''                         # command prefix for dry run
+if [[ $DRY_RUN == 'y' ]]; then
+  RUN='echo'
+fi
+
+# @dry-run }
 
 function usage() {
   cat <<EOF
@@ -76,8 +90,9 @@ Usage: $SELF [-M <mirror>] [-N <noproxy>] [-H <port>] [-S <port>] [-m <type>]
   <port>:       proxy port, override -HS options, default: $PROXY_PORT
 
 Environment variables:
-  DOCKER_MIRROR: mirror to install docker, default: $DOCKER_MIRROR
-  OFFLINE:       force into offline mode [y n], default: $OFFLINE
+
+  MIRROR_URL:   mirror to install docker, default: $MIRROR_URL
+  OFFLINE:      force into offline mode [y n], default: $OFFLINE
 
 Examples:
 
@@ -93,7 +108,10 @@ Examples:
   4. Deploy with specified proxy host and port (911 for http, 912 for https)
      $SELF -H 911 -S 912 http://proxy.example.com
 
-  5. Uninstall
+  5. Install specific version
+     $SELF -v $VERSION
+
+  6. Uninstall
      $SELF -U
 
 Version: $SELF_VERSION
@@ -121,7 +139,7 @@ function main() {
           ;;
       v ) VERSION=${OPTARG#v};;
       U ) UNINSTALL=y;;
-      n ) DRY_RUN='y';;
+      n ) DRY_RUN=y && RUN='echo';;
       h ) usage && exit;;
       * ) usage && err "invalid option: $OPTARG" && exit 1;;
     esac
@@ -146,7 +164,7 @@ function main() {
     export no_proxy=
   fi
 
-  for v in CACHE DIST DOCKERC_CONFIG DOCKERD_CONFIG DOCKER_MIRROR DRY_RUN MIRROR OFFLINE PORT_HTTP \
+  for v in CACHE DIST DOCKERC_CONFIG DOCKERD_CONFIG MIRROR_URL DRY_RUN MIRROR OFFLINE PORT_HTTP \
 	   PORT_HTTPS PROXY_HOST PROXY_PORT PROXY_SKIP REGISTRY_MIRROR SERVICE_CONFIG VERSION; do
     eval echo "$v: \${$v}"
   done
@@ -159,7 +177,7 @@ function main() {
   check_network
   check_mirror
   ensure_workdir
-  ensure_cleanedup
+  ensure_cleared
   if [[ $UNINSTALL == "y" ]]; then
     ensure_uninstalled
   else
@@ -186,13 +204,6 @@ function current_version() {
   echo $version
 }
 
-function validate_sudo() {
-  if [[ -n $SUDO ]]; then
-    msg "validate sudo"
-    sudo -v
-  fi
-}
-
 function check_prerequisites() {
   msg "check prerequisites"
   if [[ -z $(which curl) ]]; then
@@ -205,60 +216,8 @@ function check_prerequisites() {
   fi
 }
 
-# the target URL is reachable but the response may be 4xx or 5xx
-function can_access() {
-   curl -IL -s -m 5 $1 >/dev/null 2>&1
-}
-
-function check_network() {
-  msg "check network"
-  if [[ $OFFLINE != 'y' ]]; then
-    if ! can_access example.com; then
-      msg "can't access external network"
-      OFFLINE="y"
-    fi
-  fi
-  msg "offline mode: $OFFLINE"
-}
-
-function ensure_workdir() {
-  msg "ensure workdir"
-
-  for d in $CACHE_PACKAGES $CACHE_RUN; do
-    if [[ ! -d $d ]]; then
-      msg "create dir: $d"
-      mkdir -p $d
-    fi
-  done
-}
-
-
-NEED_MIRROR=n
-function check_mirror() {
-  msg "is mirror needed"
-  if [[ $MIRROR == "auto" ]]; then
-    MIRROR=yes # default as needed
-    if [[ $OFFLINE == "y" ]]; then
-      msg "offline mode, assume mirror is needed"
-    else
-      msg "check whether we can access docker repo"
-      local target="$DOCKER_REPO"
-      if can_access $target; then
-        msg "curl $target is OK"
-        MIRROR=no
-      else
-        msg "curl $target is FAILED"
-      fi
-    fi
-  fi
-  if [[ $MIRROR == "yes" ]]; then
-    NEED_MIRROR=y
-  fi
-  msg "need mirror: $NEED_MIRROR"
-}
-
-function ensure_cleanedup() {
-  msg "ensure old docker is cleaned up"
+function ensure_cleared() {
+  msg "ensure old docker is cleared"
 
   if [[ $DIST == "centos" || $DIST == "openeuler" ]]; then
     $SUDO yum remove docker docker-client docker-client-latest docker-common \
@@ -310,9 +269,9 @@ function install_from_cache() {
 function install_docker() {
   msg "install docker, version:$VERSION"
 
-  local base_url="$DOCKER_REPO/linux"
-  if [[ $NEED_MIRROR == "y" ]]; then
-    base_url="$DOCKER_MIRROR/linux"
+  local base_url="$BASEURL/linux"
+  if [[ $USE_MIRROR == "y" ]]; then
+    base_url="$MIRROR_URL/linux"
   fi
 
   if [[ $DIST == "openeuler" ]]; then
@@ -553,5 +512,126 @@ EOF
     msg "logout and login again or reboot to take effect"
   fi
 }
+
+# @base {
+# AUTO-GENERATED, DO NOT EDIT!
+
+function msg {
+  echo "> $@"
+}
+
+function err {
+  echo "> $@" >&2
+}
+
+function has() {
+  [[ -z "${1##*$2*}" ]] && [[ -z "$2" || -n "$1" ]]
+}
+
+# @base }
+
+# @network {
+# AUTO-GENERATED, DO NOT EDIT!
+
+OFFLINE="${OFFLINE:-n}"                           # no external network
+MIRROR="${MIRROR:-auto}"                          # mirror option to use
+MIRRORS="yes no auto"                             # valid mirror options
+USE_MIRROR="${USE_MIRROR:-n}"                     # need to use mirror
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror or http proxy to use
+URL_TO_CHECK="${URL_TO_CHECK:-https://raw.githubusercontent.com}"
+
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
+}
+
+function check_network() {
+  msg "check network"
+  if [[ $OFFLINE != 'y' ]]; then
+    if ! can_access example.com; then
+      msg "can't access external network"
+      OFFLINE="y"
+    fi
+  fi
+  msg "offline mode: $OFFLINE"
+}
+
+function check_mirror() {
+  msg "use mirror or not"
+  if [[ $MIRROR == "auto" ]]; then
+    MIRROR=yes # default as needed
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
+    else
+      local target="$URL_TO_CHECK"
+      msg "check whether we can access $target"
+      if can_access $target; then
+        msg "curl $target is OK"
+        MIRROR=no
+      else
+        msg "curl $target is FAILED"
+      fi
+    fi
+  fi
+  if [[ $MIRROR == "yes" ]]; then
+    msg "mirror is needed"
+    if can_access $MIRROR_URL; then
+      USE_MIRROR="y"
+    else
+      err "failed to access mirror ($MIRROR_URL)"
+    fi
+  fi
+  msg "use mirror: $USE_MIRROR"
+}
+
+function mirror_url() {
+  local origin="${1:?argument missing}"
+
+  if [[ $USE_MIRROR == "y" ]]; then
+    echo -n "$MIRROR_URL/$origin"
+  else
+    echo -n "$origin"
+  fi
+}
+
+# @network }
+
+# @cache {
+# AUTO-GENERATED, DO NOT EDIT!
+
+CACHE="${CACHE:-cache}"                                    # the cache directory
+CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"                 # runtime generated files
+CACHE_IMAGES="${CACHE_IMAGES:-$CACHE/images}"              # exported container images
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}" # software packages, e.g. .deb, .tar.gz
+CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"     # manifest files in YAML format
+CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}" # temporary directory for downloading
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_RUN $CACHE_IMAGES $CACHE_PACKAGES $CACHE_MANIFESTS $CACHE_DOWNLOADING; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  if [[ -f "$dst" ]]; then
+    msg "already exist: $dst"
+  else
+    msg "download: $src"
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+    msg "saved at: $dst"
+  fi
+}
+
+# @cache }
 
 main "$@"
