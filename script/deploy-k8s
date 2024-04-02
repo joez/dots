@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.27
+# version: 24.04.02
 
 set -e
+
+# @self {
+# AUTO-GENERATED, DO NOT EDIT!
 
 SELF="$(basename $0)"
 SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 
-SUDO="sudo"
-if [[ $(id -u) == "0" ]]; then
-  SUDO=""
-fi
+# @self }
 
 # IP of the primary interface on the host
 HOST_IP=$(ip route get 1 | head -1 | awk '{print $7}')
@@ -26,11 +26,7 @@ INIT_WORKDIR="${INIT_WORKDIR:-n}"     # initialize workdir and quit if "y"
 
 CACHE="cache"                         # the cache directory
 CACHE_IMAGE="$CACHE/image"            # script to save or load images
-CACHE_IMAGES="$CACHE/images"          # exported container images
-CACHE_MANIFESTS="$CACHE/manifests"    # manifest files in YAML format
 CACHE_PACKAGES="$CACHE/packages"      # software packages, such as .deb
-CACHE_RUN="$CACHE/run/$SELF"          # runtime generated files
-CACHE_DOWNLOADING="$CACHE/.download"  # temp folder for downloading
 
 ADDRESS=$HOST_IP      # API server IP address
 PORT=6443             # API server IP port
@@ -44,8 +40,6 @@ MIRROR=auto           # mirror option
 MIRRORS="yes no auto" # valid mirror options
 RESET=n               # reset cluster first
 UNINSTALL=n           # reset cluster and uninstall components
-DRY_RUN=n             # dry run or not
-OFFLINE=${OFFLINE:-n} # no external network
 NO_CLUSTER=n          # do not init cluster
 NO_WORKLOAD=n         # do not schedule workload on control-plane node
 
@@ -59,9 +53,6 @@ done
 CRI_RUNTIME="${CRI_RUNTIME:-$DEF_RUNTIME}"  # CRI runtime to use
 
 CRI_CLIENT="docker"   # CRI client, such as docker, ctr
-
-GITHUB_RAW="https://raw.githubusercontent.com"                # github raw content base url
-MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"             # mirror to use for github
 
 FLANNEL_VERSION="${FLANNEL_VERSION:-0.23.0}"                  # flannel version
 FLANNEL_BASEURL="https://github.com/flannel-io/flannel"
@@ -80,17 +71,33 @@ K8S_PKG_MIRROR="https://mirrors.aliyun.com/kubernetes"        # k8s package mirr
 K8S_REG_REPO="registry.k8s.io"                                # k8s registry repo
 K8S_REG_MIRROR="registry.aliyuncs.com/google_containers"      # k8s registry mirror
 
-function msg() {
-  echo "> $@"
+# @dry-run {
+# AUTO-GENERATED, DO NOT EDIT!
+
+DRY_RUN="${DRY_RUN:-n}"        # "y" to enable
+RUN=''                         # command prefix for dry run
+if [[ $DRY_RUN == 'y' ]]; then
+  RUN='echo'
+fi
+
+# @dry-run }
+
+# @sudo {
+# AUTO-GENERATED, DO NOT EDIT!
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
 }
 
-function err() {
-  echo "> $@" >&2
-}
-
-function realfile() {
-  [[ -L "$1" ]] && readlink -f $1 || echo $1
-}
+# @sudo }
 
 function usage() {
   cat <<EOF
@@ -157,7 +164,7 @@ Examples:
      $SELF -r
 
   3. Reset the cluster and deploy the specific version
-     $SELF -r -v 1.24.0
+     $SELF -r -v $VERSION
 
   4. Deploy a cluster with one control-plane and one worker node
      # on control-plane node
@@ -191,82 +198,83 @@ function current_version() {
   echo $version
 }
 
-# adjust default version if already deployed
-CURRENT="$(current_version)"
-VERSION="${CURRENT:-$VERSION}"
-
-while getopts ":a:b:c:e:s:m:N:v:hCWnRrU" opt
-do
-  case $opt in
-    a ) ADDRESS=$OPTARG;;
-    b ) BACKEND=$OPTARG
-        if echo $BACKENDS | grep -v -w $BACKEND >/dev/null 2>&1; then
-          echo "invalid backend option $BACKEND"
-          usage && exit 1
-        fi
-        ;;
-    c ) CRI_RUNTIME=$OPTARG
-        if echo $CRI_RUNTIMES | grep -v -w $CRI_RUNTIME >/dev/null 2>&1; then
-          echo "invalid backend option $CRI_RUNTIME"
-          usage && exit 1
-        fi
-        ;;
-    e ) ENDPOINT=$OPTARG;;
-    s ) SANS=$OPTARG;;
-    m ) MIRROR=$OPTARG
-        if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
-          echo "invalid mirror option $MIRROR"
-          usage && exit 1
-        fi
-        ;;
-    N ) NODE=$OPTARG;;
-    v ) VERSION=${OPTARG#v}
-       dots="${VERSION//[^.]}"
-       if [[ ${#dots} != 2 ]]; then
-         echo "invalid version: $VERSION"
-         usage && exit 1
-       fi
-       ;;
-    r ) RESET=y;;
-    R ) RESET=y && NO_CLUSTER=y;;
-    U ) RESET=y && NO_CLUSTER=y && UNINSTALL=y;;
-    n ) DRY_RUN=y;;
-    C ) NO_CLUSTER=y;;
-    W ) NO_WORKLOAD=y;;
-    h ) usage && exit;;
-    * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
-  esac
-done
-shift $((OPTIND-1))
-
-if [[ $CRI_RUNTIME == 'docker' ]]; then
-  CRI_CLIENT="docker"
-else
-  CRI_CLIENT="ctr"
-fi
-if [[ -n $SUDO ]]; then
-  CRI_CLIENT="$SUDO $CRI_CLIENT"
-fi
-
-for v in ADDRESS BACKEND CRI_RUNTIME CRI_CLIENT CURRENT DRY_RUN ENDPOINT HOST_IP MIRROR MIRROR_URL \
-  NODE NO_CLUSTER NO_WORKLOAD OFFLINE RESET SANS UNINSTALL VERSION FLANNEL_VERSION LOCALPP_VERSION \
-  CRI_DOCKERD_VERSION
-do
-  eval echo "$v: \${$v}"
-done
-
-[[ $DRY_RUN == "y" ]] && exit
-
 function main() {
+  # adjust default version if already deployed
+  CURRENT="$(current_version)"
+  VERSION="${CURRENT:-$VERSION}"
+
+  while getopts ":a:b:c:e:s:m:N:v:hCWnRrU" opt
+  do
+    case $opt in
+      a ) ADDRESS=$OPTARG;;
+      b ) BACKEND=$OPTARG
+          if echo $BACKENDS | grep -v -w $BACKEND >/dev/null 2>&1; then
+            echo "invalid backend option $BACKEND"
+            usage && exit 1
+          fi
+          ;;
+      c ) CRI_RUNTIME=$OPTARG
+          if echo $CRI_RUNTIMES | grep -v -w $CRI_RUNTIME >/dev/null 2>&1; then
+            echo "invalid backend option $CRI_RUNTIME"
+            usage && exit 1
+          fi
+          ;;
+      e ) ENDPOINT=$OPTARG;;
+      s ) SANS=$OPTARG;;
+      m ) MIRROR=$OPTARG
+          if echo $MIRRORS | grep -v -w $MIRROR >/dev/null 2>&1; then
+            echo "invalid mirror option $MIRROR"
+            usage && exit 1
+          fi
+          ;;
+      N ) NODE=$OPTARG;;
+      v ) VERSION=${OPTARG#v}
+         dots="${VERSION//[^.]}"
+         if [[ ${#dots} != 2 ]]; then
+           echo "invalid version: $VERSION"
+           usage && exit 1
+         fi
+         ;;
+      r ) RESET=y;;
+      R ) RESET=y && NO_CLUSTER=y;;
+      U ) RESET=y && NO_CLUSTER=y && UNINSTALL=y;;
+      n ) DRY_RUN=y;;
+      C ) NO_CLUSTER=y;;
+      W ) NO_WORKLOAD=y;;
+      h ) usage && exit;;
+      * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
+    esac
+  done
+  shift $((OPTIND-1))
+
+  if [[ $CRI_RUNTIME == 'docker' ]]; then
+    CRI_CLIENT="docker"
+  else
+    CRI_CLIENT="ctr"
+  fi
+  if [[ -n $SUDO ]]; then
+    CRI_CLIENT="$SUDO $CRI_CLIENT"
+  fi
+
+  for v in ADDRESS BACKEND CRI_RUNTIME CRI_CLIENT CURRENT DRY_RUN ENDPOINT HOST_IP MIRROR MIRROR_URL \
+    NODE NO_CLUSTER NO_WORKLOAD OFFLINE RESET SANS UNINSTALL VERSION FLANNEL_VERSION LOCALPP_VERSION \
+    CRI_DOCKERD_VERSION
+  do
+    eval echo "$v: \${$v}"
+  done
+
+  [[ $DRY_RUN == "y" ]] && exit
+
   warn_as_root
   if [[ $INIT_WORKDIR == "y" ]]; then
-    ensure_workdir && exit
+    init_workdir && exit
   fi
   validate_sudo
   check_prerequisites
   check_network
-  check_mirror
-  ensure_workdir
+  check_container
+  check_mirror && check_k8s_mirror
+  init_workdir
   ensure_swapoff
   ensure_iptables
   ensure_selinuxoff
@@ -283,6 +291,10 @@ function main() {
   fi
 
   msg "done"
+}
+
+function realfile() {
+  [[ -L "$1" ]] && readlink -f $1 || echo $1
 }
 
 function dist_name() {
@@ -318,22 +330,209 @@ function check_prerequisites() {
   fi
 }
 
+function check_container() {
+  msg "check container image downloading"
+  local image="docker.io/library/hello-world:latest"
+  if ! $CRI_CLIENT image pull $image >/dev/null 2>&1; then
+    err "$CRI_CLIENT image pull $image failed, check $CRI_RUNTIME configuration"
+    exit 1
+  fi
+}
+
+function warn_as_root() {
+  if [[ $(id -u) == "0" ]]; then
+    msg "you are running as root user, are you sure?"
+    msg "continue in 5 seconds, CTRL + C to interrupt"
+    read -t 5 || true
+  fi
+}
+
+function init_workdir() {
+  ensure_workdir && ensure_script
+}
+
+USE_K8S_MIRROR="n"
+function check_k8s_mirror() {
+  msg "is k8s mirror needed"
+
+  local mirror;
+  if [[ $MIRROR == "auto" ]]; then
+    mirror="yes" # default as needed
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
+    else
+      msg "check if we can access k8s pkgs and images"
+      local target="$K8S_PKG_REPO"
+      if can_access $target; then
+        msg "curl $target is OK"
+        target="$K8S_REG_REPO/pause:latest"
+        if $CRI_CLIENT image pull $target >/dev/null 2>&1; then
+          msg "$CRI_CLIENT image pull $target is OK"
+          mirror="no"
+        else
+          msg "$CRI_CLIENT image pull $target is FAILED"
+        fi
+      else
+        msg "curl $target is FAILED"
+      fi
+    fi
+  fi
+
+  local since="1.24.0" # official repo only has k8s >= 1.24
+  if [[ $mirror == "no" && $(minimal_version $since $VERSION) != $since ]]; then
+    msg "request legacy version $VERSION, only available in the mirror"
+    msg "use the mirror forcibly"
+    mirror="yes"
+  fi
+
+  if [[ $MIRROR == "yes" || $mirror == "yes" ]]; then
+    USE_K8S_MIRROR="y"
+  fi
+  msg "need k8s mirror: $USE_K8S_MIRROR"
+}
+
+# @base {
+# AUTO-GENERATED, DO NOT EDIT!
+
+function msg {
+  echo "> $@"
+}
+
+function err {
+  echo "> $@" >&2
+}
+
+function has() {
+  [[ -z "${1##*$2*}" ]] && [[ -z "$2" || -n "$1" ]]
+}
+
+# @base }
+
+# @network {
+# AUTO-GENERATED, DO NOT EDIT!
+
+OFFLINE="${OFFLINE:-n}"                           # no external network
+MIRROR="${MIRROR:-auto}"                          # mirror option to use
+MIRRORS="yes no auto"                             # valid mirror options
+USE_MIRROR="${USE_MIRROR:-n}"                     # need to use mirror
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror or http proxy to use
+URL_TO_CHECK="${URL_TO_CHECK:-https://raw.githubusercontent.com}"
+
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
+}
+
 function check_network() {
   msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
     if ! can_access example.com; then
       msg "can't access external network"
       OFFLINE="y"
-    else
-      msg "check container image downloading"
-      local image="docker.io/library/hello-world:latest"
-      if ! $CRI_CLIENT image pull $image >/dev/null 2>&1; then
-        err "$CRI_CLIENT image pull $image failed, check $CRI_RUNTIME configuration"
-        exit 1
-      fi
     fi
   fi
   msg "offline mode: $OFFLINE"
+}
+
+function check_mirror() {
+  msg "use mirror or not"
+
+  local mirror;
+  if [[ $MIRROR == "auto" ]]; then
+    mirror="yes" # default as needed
+    if [[ $OFFLINE == "y" ]]; then
+      msg "offline mode, assume mirror is needed"
+    else
+      local target="$URL_TO_CHECK"
+      msg "check whether we can access $target"
+      if can_access $target; then
+        msg "curl $target is OK"
+        mirror="no"
+      else
+        msg "curl $target is FAILED"
+      fi
+    fi
+  fi
+  if [[ $MIRROR == "yes" || $mirror == "yes" ]]; then
+    msg "mirror is needed"
+    if can_access $MIRROR_URL; then
+      USE_MIRROR="y"
+    else
+      err "failed to access mirror ($MIRROR_URL)"
+    fi
+  fi
+  msg "use mirror: $USE_MIRROR"
+}
+
+function mirror_url() {
+  local origin="${1:?argument missing}"
+
+  if [[ $USE_MIRROR == "y" ]]; then
+    echo -n "$MIRROR_URL/$origin"
+  else
+    echo -n "$origin"
+  fi
+}
+
+# @network }
+
+# @cache {
+# AUTO-GENERATED, DO NOT EDIT!
+
+CACHE="${CACHE:-cache}"                                    # the cache directory
+CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"                 # runtime generated files
+CACHE_IMAGES="${CACHE_IMAGES:-$CACHE/images}"              # exported container images
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}" # software packages, e.g. .deb, .tar.gz
+CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"     # manifest files in YAML format
+CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}" # temporary directory for downloading
+
+function ensure_workdir() {
+  msg "ensure workdir"
+
+  for d in $CACHE_RUN $CACHE_IMAGES $CACHE_PACKAGES $CACHE_MANIFESTS $CACHE_DOWNLOADING; do
+    if [[ ! -d $d ]]; then
+      msg "create dir: $d"
+      mkdir -p $d
+    fi
+  done
+}
+
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  if [[ -f "$dst" ]]; then
+    msg "already exist: $dst"
+  else
+    msg "download: $src"
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+    msg "saved at: $dst"
+  fi
+}
+
+# @cache }
+
+function save_package_list() {
+  local path="${1:?argument missing}"
+  local dist=$(dist_name)
+  msg "save current package list to $path"
+
+  mkdir -p $(dirname $path)
+
+  if [[ $dist == "ubuntu" ]]; then
+    ls -1 /var/cache/apt/archives/*.deb | sort > $path
+  elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
+    if [[ -d /var/cache/dnf ]]; then
+      ls -1 /var/cache/dnf/*/packages/*.rpm | sort > $path
+    else
+      ls -1 /var/cache/yum/*/*/*/packages/*.rpm | sort > $path
+    fi
+  else
+    err "dist \"$dist\" is not supported!"
+    exit 1
+  fi
 }
 
 NEED_CRI_DOCKERD=n
@@ -364,46 +563,6 @@ function ensure_cri_dockerd_uninstalled() {
     $SUDO rm -f /etc/systemd/system/cri-docker.{service,socket}
     $SUDO systemctl daemon-reload
   fi
-}
-
-# the target URL is reachable but the response may be 4xx or 5xx
-function can_access() {
-   curl -IL -s -m 5 $1 >/dev/null 2>&1
-}
-
-function mirror_url() {
-  local origin="${1:?argument missing}"
-
-  if [[ -z "$USE_MIRROR" ]]; then
-    USE_MIRROR="n" # only one chance to check
-    if ! can_access $GITHUB_RAW; then
-      if can_access $MIRROR_URL; then
-        USE_MIRROR="y"
-      else
-        err "failed to access mirror ($MIRROR_URL)"
-      fi
-    fi
-  fi
-  if [[ $USE_MIRROR == "y" ]]; then
-    echo -n "$MIRROR_URL/$origin"
-  else
-    echo -n "$origin"
-  fi
-}
-
-function download_file() {
-  local src="${1:?missing source url}"
-  local dst="${2:?missing destination}"
-
-  msg "download: $src"
-  if [[ -f "$dst" ]]; then
-    msg "already exist"
-  else
-    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
-    $RUN curl -fsSL $src > $tmp
-    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
-  fi
-  msg "saved at: $dst"
 }
 
 function install_cri_dockerd_if_needed() {
@@ -454,65 +613,6 @@ function install_cri_dockerd_if_needed() {
   fi
 }
 
-NEED_MIRROR=n
-function check_mirror() {
-  msg "is mirror needed"
-  if [[ $MIRROR == "auto" ]]; then
-    MIRROR=yes # default as needed
-    if [[ $OFFLINE == "y" ]]; then
-      msg "offline mode, assume mirror is needed"
-    else
-      msg "check if we can access k8s pkgs and images"
-      local target="$K8S_PKG_REPO"
-      if can_access $target; then
-        msg "curl $target is OK"
-        target="$K8S_REG_REPO/pause:latest"
-        if $CRI_CLIENT image pull $target >/dev/null 2>&1; then
-          msg "$CRI_CLIENT image pull $target is OK"
-          MIRROR=no
-        else
-          msg "$CRI_CLIENT image pull $target is FAILED"
-        fi
-      else
-        msg "curl $target is FAILED"
-      fi
-    fi
-  fi
-
-  local since="1.24.0" # official repo only has k8s >= 1.24
-  if [[ $(minimal_version $since $VERSION) != $since ]]; then
-    msg "request legacy version $VERSION, only available in the mirror"
-    msg "use the mirror forcibly"
-    MIRROR=yes
-  fi
-
-  if [[ $MIRROR == "yes" ]]; then
-    NEED_MIRROR=y
-  fi
-  msg "need mirror: $NEED_MIRROR"
-}
-
-function save_package_list() {
-  local path="${1:?argument missing}"
-  local dist=$(dist_name)
-  msg "save current package list to $path"
-
-  mkdir -p $(dirname $path)
-
-  if [[ $dist == "ubuntu" ]]; then
-    ls -1 /var/cache/apt/archives/*.deb | sort > $path
-  elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
-    if [[ -d /var/cache/dnf ]]; then
-      ls -1 /var/cache/dnf/*/packages/*.rpm | sort > $path
-    else
-      ls -1 /var/cache/yum/*/*/*/packages/*.rpm | sort > $path
-    fi
-  else
-    err "dist \"$dist\" is not supported!"
-    exit 1
-  fi
-}
-
 function install_k8s() {
   local dist=$(dist_name)
   msg "install k8s on \"$dist\""
@@ -558,7 +658,7 @@ function install_k8s() {
     local key="$K8S_PKG_REPO/$version/deb/Release.key"
     local src="$K8S_PKG_REPO/$version/deb/ /"
 
-    if [[ $NEED_MIRROR == "y" ]]; then
+    if [[ $USE_K8S_MIRROR == "y" ]]; then
       key="$K8S_PKG_MIRROR/apt/doc/apt-key.gpg"
       src="$K8S_PKG_MIRROR/apt/ kubernetes-xenial main"
     fi
@@ -598,7 +698,7 @@ EOF
     local key="$K8S_PKG_REPO/$version/rpm/repodata/repomd.xml.key"
     local src="$K8S_PKG_REPO/$version/rpm"
 
-    if [[ $NEED_MIRROR == "y" ]]; then
+    if [[ $USE_K8S_MIRROR == "y" ]]; then
       local name="el7-$(uname -m)"
       local base="$K8S_PKG_MIRROR/yum/doc"
       key="$base/yum-key.gpg $base/rpm-package-key.gpg"
@@ -658,15 +758,6 @@ EOF
   done <$packages_delta
 }
 
-function ensure_selinuxoff() {
-  msg "ensure SELinux is off"
-  if [[ -n "$(which getenforce)" && "$(getenforce)" == "Enforcing" ]]; then
-    msg "set SELinux in permissive mode (effectively disabling it)"
-    $SUDO setenforce 0
-    $SUDO sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
-  fi
-}
-
 function ensure_installed() {
   msg "ensure k8s installed"
 
@@ -704,6 +795,15 @@ function ensure_uninstalled() {
   fi
 
   ensure_cri_dockerd_uninstalled
+}
+
+function ensure_selinuxoff() {
+  msg "ensure SELinux is off"
+  if [[ -n "$(which getenforce)" && "$(getenforce)" == "Enforcing" ]]; then
+    msg "set SELinux in permissive mode (effectively disabling it)"
+    $SUDO setenforce 0
+    $SUDO sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+  fi
 }
 
 function ensure_swapoff() {
@@ -757,30 +857,8 @@ EOF
   fi
 }
 
-function warn_as_root() {
-  if [[ $(id -u) == "0" ]]; then
-    msg "you are running as root user, are you sure?"
-    msg "continue in 5 seconds, CTRL + C to interrupt"
-    read -t 5 || true
-  fi
-}
-
-function validate_sudo() {
-  if [[ -n $SUDO ]]; then
-    msg "validate sudo"
-    sudo -v
-  fi
-}
-
-function ensure_workdir() {
-  msg "ensure workdir"
-
-  for d in $CACHE_IMAGES $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN $CACHE_DOWNLOADING; do
-    if [[ ! -d $d ]]; then
-      msg "create dir: $d"
-      mkdir -p $d
-    fi
-  done
+function ensure_script() {
+  msg "ensure script"
 
   if [[ ! -f $CACHE_IMAGE ]]; then
     msg "create script: $CACHE_IMAGE"
@@ -1055,7 +1133,7 @@ function init_cluster() {
   if [[ -n $NODE ]]; then
     name="$NODE"
   fi
-  if [[ $NEED_MIRROR == "y" ]]; then
+  if [[ $USE_K8S_MIRROR == "y" ]]; then
     local repo="$K8S_REG_MIRROR"
     repo_config="imageRepository: \"$repo\""
     msg "mirror is required, use image repository: $repo"
