@@ -604,7 +604,7 @@ function mirror_url() {
 CACHE="${CACHE:-cache}"                                    # the cache directory
 CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"                 # runtime generated files
 CACHE_IMAGES="${CACHE_IMAGES:-$CACHE/images}"              # exported container images
-CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}" # software packages, e.g. .deb, .tar.gz
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages}"        # software packages, e.g. .deb, .tar.gz
 CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"     # manifest files in YAML format
 CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}" # temporary directory for downloading
 

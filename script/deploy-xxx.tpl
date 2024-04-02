@@ -112,7 +112,7 @@ function main() {
 
   local manifest_dir="$CACHE_MANIFESTS/$NAME-$VERSION"
   local manifest_list="cert-manager.yaml"
-  local package_dir="$CACHE_PACKAGES/$NAME-$VERSION"
+  local package_dir="$CACHE_PACKAGES/common/$NAME-$VERSION"
   local package_list="$NAME_CTL"
 
   mkdir -p $package_dir $manifest_dir

@@ -24,10 +24,6 @@ JOIN_MANUAL="kubeadm-join.txt"        # "kubeadm join" instructions
 
 INIT_WORKDIR="${INIT_WORKDIR:-n}"     # initialize workdir and quit if "y"
 
-CACHE="cache"                         # the cache directory
-CACHE_IMAGE="$CACHE/image"            # script to save or load images
-CACHE_PACKAGES="$CACHE/packages"      # software packages, such as .deb
-
 ADDRESS=$HOST_IP      # API server IP address
 PORT=6443             # API server IP port
 BACKEND="vxlan"       # flannel backend
@@ -246,6 +242,8 @@ function main() {
     esac
   done
   shift $((OPTIND-1))
+
+  CACHE_IMAGE="$CACHE/image" # script to save or load images
 
   if [[ $CRI_RUNTIME == 'docker' ]]; then
     CRI_CLIENT="docker"
@@ -482,7 +480,7 @@ function mirror_url() {
 CACHE="${CACHE:-cache}"                                    # the cache directory
 CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"                 # runtime generated files
 CACHE_IMAGES="${CACHE_IMAGES:-$CACHE/images}"              # exported container images
-CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}" # software packages, e.g. .deb, .tar.gz
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages}"        # software packages, e.g. .deb, .tar.gz
 CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"     # manifest files in YAML format
 CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}" # temporary directory for downloading
 

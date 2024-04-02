@@ -124,7 +124,7 @@ function main() {
   local dir_deploy="deployment"
   local manifest_dir="$CACHE_MANIFESTS/$NAME-$VERSION"
   local manifest_dir_deploy="$manifest_dir/$dir_deploy"
-  local package_dir="$CACHE_PACKAGES/$NAME-$VERSION"
+  local package_dir="$CACHE_PACKAGES/common/$NAME-$VERSION"
   local package_file="v$VERSION.tar.gz"
   local package_path="$package_dir/$package_file"
 
@@ -305,7 +305,7 @@ function mirror_url() {
 CACHE="${CACHE:-cache}"                                    # the cache directory
 CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"                 # runtime generated files
 CACHE_IMAGES="${CACHE_IMAGES:-$CACHE/images}"              # exported container images
-CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}" # software packages, e.g. .deb, .tar.gz
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages}"        # software packages, e.g. .deb, .tar.gz
 CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"     # manifest files in YAML format
 CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}" # temporary directory for downloading
 
