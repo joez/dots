@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.31
+# version: 24.04.02
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # only run this when the script is executed, not sourced
@@ -148,8 +148,10 @@ function check_network() {
 
 function check_mirror() {
   msg "use mirror or not"
+
+  local mirror;
   if [[ $MIRROR == "auto" ]]; then
-    MIRROR=yes # default as needed
+    mirror="yes" # default as needed
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
@@ -157,13 +159,13 @@ function check_mirror() {
       msg "check whether we can access $target"
       if can_access $target; then
         msg "curl $target is OK"
-        MIRROR=no
+        mirror="no"
       else
         msg "curl $target is FAILED"
       fi
     fi
   fi
-  if [[ $MIRROR == "yes" ]]; then
+  if [[ $MIRROR == "yes" || $mirror == "yes" ]]; then
     msg "mirror is needed"
     if can_access $MIRROR_URL; then
       USE_MIRROR="y"
