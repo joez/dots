@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.31
+# version: 24.04.02
 
 set -e
 
@@ -13,7 +13,7 @@ SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
 # @self }
 NAME="${SELF#*-}"
 
-VERSION="3.1.2"       # version to deploy
+VERSION="3.3.0"       # version to deploy
 CUR_VER=              # current version if any
 RESET=n               # reset the deployment
 UNINSTALL=n           # reset the deployment and uninstall components
