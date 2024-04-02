@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.31
+# version: 24.04.02
 
 set -e
 
@@ -90,7 +90,7 @@ function main() {
       v ) VERSION=${OPTARG#v};;
       R ) RESET=y;;
       U ) RESET=y && UNINSTALL=y;;
-      n ) DRY_RUN=y;;
+      n ) DRY_RUN=y && RUN='echo';;
       h ) usage && exit;;
       * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
     esac
