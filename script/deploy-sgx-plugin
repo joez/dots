@@ -1,46 +1,39 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.22
+# version: 24.04.02
 
 set -e
 
+# @self {
+# AUTO-GENERATED, DO NOT EDIT!
+
 SELF="$(basename $0)"
 SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+# @self }
 NAME="${SELF#*-}"
 
-SUDO="sudo"
-if [[ $(id -u) == "0" ]]; then
-  SUDO=""
-fi
-
 VERSION="0.28.0"      # version to deploy
-DRY_RUN=n             # print information only
-MIRROR="auto"         # mirror option
-MIRRORS="yes no auto" # valid mirror options
+CUR_VER=              # current version if any
 RESET=n               # reset the deployment
 UNINSTALL=n           # reset the deployment and uninstall components
-OFFLINE=${OFFLINE:-n} # no external network
 
 REPO_URL="https://github.com/intel/intel-device-plugins-for-kubernetes"
-GITHUB_RAW="https://raw.githubusercontent.com"                # github raw content base url
-MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}"             # mirror to use for github
 
 VARIANT="$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/')"
 TIMEOUT="300s"
 NAMESPACE="kube-system"
 
-CACHE="cache"
-CACHE_MANIFESTS="$CACHE/manifests"
-CACHE_PACKAGES="$CACHE/packages/common"
-CACHE_RUN="$CACHE/run/$SELF"
+# @dry-run {
+# AUTO-GENERATED, DO NOT EDIT!
 
-function msg() {
-  echo "> $@"
-}
+DRY_RUN="${DRY_RUN:-n}"        # "y" to enable
+RUN=''                         # command prefix for dry run
+if [[ $DRY_RUN == 'y' ]]; then
+  RUN='echo'
+fi
 
-function err() {
-  echo "> $@" >&2
-}
+# @dry-run }
 
 function usage() {
   cat <<EOF
@@ -60,6 +53,7 @@ Cache:
   To speed up deployment, the required files will be cached at "$CACHE"
 
 Environment variables:
+
   MIRROR_URL:  mirror to use, default: $MIRROR_URL
   OFFLINE:     force into offline mode [y n], default: $OFFLINE
 
@@ -113,8 +107,8 @@ function check_nfd() {
 
 function main() {
   # adjust default version if already deployed
-  local deployed="$(current_version)"
-  VERSION="${deployed:-$VERSION}"
+  CUR_VER="$(current_version)"
+  VERSION="${CUR_VER:-$VERSION}"
 
   while getopts ":m:v:hnRU" opt
   do
@@ -128,19 +122,17 @@ function main() {
       v ) VERSION=${OPTARG#v};;
       R ) RESET=y;;
       U ) RESET=y && UNINSTALL=y;;
-      n ) DRY_RUN=y;;
+      n ) DRY_RUN=y && RUN='echo';;
       h ) usage && exit;;
       * ) usage && echo "invalid option: -$OPTARG" && exit 1;;
     esac
   done
   shift $((OPTIND-1))
 
-  for v in CACHE DRY_RUN MIRROR MIRROR_URL OFFLINE RESET UNINSTALL VERSION
+  for v in CACHE DRY_RUN MIRROR MIRROR_URL OFFLINE RESET UNINSTALL VERSION CUR_VER
   do
     eval echo "$v: \${$v}"
   done
-
-  msg "deployed version: $deployed"
 
   [[ $DRY_RUN == "y" ]] && exit
 
@@ -164,16 +156,12 @@ function main() {
 
   local base_url="$(mirror_url $REPO_URL)"
 
-  msg "download intel-device-plugin"
-  if [[ ! -e "$package_path" ]]; then
-    if [[ $OFFLINE == "y" ]]; then
-      err "no cache found: $package_path"
-      exit 1
-    else
-      local package_url="$base_url/archive/refs/tags/$package_file"
-      msg "download $package_url -> $package_path"
-      curl -L $package_url > $package_path
-    fi
+  if [[ $OFFLINE == "y" ]]; then
+    msg "WARNING: offline mode, cache must be ready"
+  else
+    msg "download package"
+    local url="$REPO_URL/archive/refs/tags/$package_file"
+    download_file "$(mirror_url $url)" "$package_path"
   fi
 
   msg "prepare manifest"
@@ -319,14 +307,59 @@ function check_prerequisites() {
   fi
 }
 
-function access_ok() {
-   curl -IL -f -s -m 5 $1 >/dev/null 2>&1
+# @base {
+# AUTO-GENERATED, DO NOT EDIT!
+
+function msg {
+  echo "> $@"
+}
+
+function err {
+  echo "> $@" >&2
+}
+
+function has() {
+  [[ -z "${1##*$2*}" ]] && [[ -z "$2" || -n "$1" ]]
+}
+
+# @base }
+
+# @sudo {
+# AUTO-GENERATED, DO NOT EDIT!
+
+SUDO="sudo"
+if [[ $(id -u) == "0" ]]; then
+  SUDO=""
+fi
+
+function validate_sudo() {
+  if [[ -n $SUDO ]]; then
+    msg "validate sudo"
+    sudo -v
+  fi
+}
+
+# @sudo }
+
+# @network {
+# AUTO-GENERATED, DO NOT EDIT!
+
+OFFLINE="${OFFLINE:-n}"                           # no external network
+MIRROR="${MIRROR:-auto}"                          # mirror option to use
+MIRRORS="yes no auto"                             # valid mirror options
+USE_MIRROR="${USE_MIRROR:-n}"                     # need to use mirror
+MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror or http proxy to use
+URL_TO_CHECK="${URL_TO_CHECK:-https://raw.githubusercontent.com}"
+
+# the target URL is reachable but the response may be 4xx or 5xx
+function can_access() {
+   curl -IL -s -m 5 $1 >/dev/null 2>&1
 }
 
 function check_network() {
   msg "check network"
   if [[ $OFFLINE != 'y' ]]; then
-    if ! access_ok example.com; then
+    if ! can_access example.com; then
       msg "can't access external network"
       OFFLINE="y"
     fi
@@ -334,27 +367,28 @@ function check_network() {
   msg "offline mode: $OFFLINE"
 }
 
-USE_MIRROR=n
 function check_mirror() {
   msg "use mirror or not"
+
+  local mirror;
   if [[ $MIRROR == "auto" ]]; then
-    MIRROR=yes # default as needed
+    mirror="yes" # default as needed
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
-      msg "check whether we can access github"
-      local target="$GITHUB_RAW"
-      if access_ok $target; then
+      local target="$URL_TO_CHECK"
+      msg "check whether we can access $target"
+      if can_access $target; then
         msg "curl $target is OK"
-        MIRROR=no
+        mirror="no"
       else
         msg "curl $target is FAILED"
       fi
     fi
   fi
-  if [[ $MIRROR == "yes" ]]; then
+  if [[ $MIRROR == "yes" || $mirror == "yes" ]]; then
     msg "mirror is needed"
-    if access_ok $MIRROR_URL; then
+    if can_access $MIRROR_URL; then
       USE_MIRROR="y"
     else
       err "failed to access mirror ($MIRROR_URL)"
@@ -366,22 +400,51 @@ function check_mirror() {
 function mirror_url() {
   local origin="${1:?argument missing}"
 
-  if [[ $USE_MIRROR = "y" ]]; then
+  if [[ $USE_MIRROR == "y" ]]; then
     echo -n "$MIRROR_URL/$origin"
   else
     echo -n "$origin"
   fi
 }
 
+# @network }
+
+# @cache {
+# AUTO-GENERATED, DO NOT EDIT!
+
+CACHE="${CACHE:-cache}"                                    # the cache directory
+CACHE_RUN="${CACHE_RUN:-$CACHE/run/$SELF}"                 # runtime generated files
+CACHE_IMAGES="${CACHE_IMAGES:-$CACHE/images}"              # exported container images
+CACHE_PACKAGES="${CACHE_PACKAGES:-$CACHE/packages/common}" # software packages, e.g. .deb, .tar.gz
+CACHE_MANIFESTS="${CACHE_MANIFESTS:-$CACHE/manifests}"     # manifest files in YAML format
+CACHE_DOWNLOADING="${CACHE_DOWNLOADING:-$CACHE/.download}" # temporary directory for downloading
+
 function ensure_workdir() {
   msg "ensure workdir"
 
-  for d in $CACHE_MANIFESTS $CACHE_PACKAGES $CACHE_RUN; do
+  for d in $CACHE_RUN $CACHE_IMAGES $CACHE_PACKAGES $CACHE_MANIFESTS $CACHE_DOWNLOADING; do
     if [[ ! -d $d ]]; then
       msg "create dir: $d"
       mkdir -p $d
     fi
   done
 }
+
+function download_file() {
+  local src="${1:?missing source url}"
+  local dst="${2:?missing destination}"
+
+  if [[ -f "$dst" ]]; then
+    msg "already exist: $dst"
+  else
+    msg "download: $src"
+    local tmp="$CACHE_DOWNLOADING/$(basename $dst)"
+    $RUN curl -fsSL $src > $tmp
+    $RUN mkdir -p $(dirname $dst) && mv $tmp $dst
+    msg "saved at: $dst"
+  fi
+}
+
+# @cache }
 
 main "$@"
