@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.03.31
+# version: 24.04.02
 
 set -e
 
@@ -276,7 +276,7 @@ MIRROR="${MIRROR:-auto}"                          # mirror option to use
 MIRRORS="yes no auto"                             # valid mirror options
 USE_MIRROR="${USE_MIRROR:-n}"                     # need to use mirror
 MIRROR_URL="${MIRROR_URL:-https://iffi.me/proxy}" # mirror or http proxy to use
-GITHUB_RAW="https://raw.githubusercontent.com"    # the key factor to use mirror
+URL_TO_CHECK="${URL_TO_CHECK:-https://raw.githubusercontent.com}"
 
 # the target URL is reachable but the response may be 4xx or 5xx
 function can_access() {
@@ -296,22 +296,24 @@ function check_network() {
 
 function check_mirror() {
   msg "use mirror or not"
+
+  local mirror;
   if [[ $MIRROR == "auto" ]]; then
-    MIRROR=yes # default as needed
+    mirror="yes" # default as needed
     if [[ $OFFLINE == "y" ]]; then
       msg "offline mode, assume mirror is needed"
     else
-      msg "check whether we can access github"
-      local target="$GITHUB_RAW"
+      local target="$URL_TO_CHECK"
+      msg "check whether we can access $target"
       if can_access $target; then
         msg "curl $target is OK"
-        MIRROR=no
+        mirror="no"
       else
         msg "curl $target is FAILED"
       fi
     fi
   fi
-  if [[ $MIRROR == "yes" ]]; then
+  if [[ $MIRROR == "yes" || $mirror == "yes" ]]; then
     msg "mirror is needed"
     if can_access $MIRROR_URL; then
       USE_MIRROR="y"
@@ -325,7 +327,7 @@ function check_mirror() {
 function mirror_url() {
   local origin="${1:?argument missing}"
 
-  if [[ $USE_MIRROR = "y" ]]; then
+  if [[ $USE_MIRROR == "y" ]]; then
     echo -n "$MIRROR_URL/$origin"
   else
     echo -n "$origin"
