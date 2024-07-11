@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 23.11.11
+# version: 24.07.11
 
 set -e
 
@@ -124,6 +124,8 @@ elif [[ "$cmd" == "serve" ]]; then
     msg "stop and delete the old container: $SVC_NAME"
     $SUDO docker rm -f $SVC_NAME
   fi
+  msg "clean the index cache"
+  rm -f $DIR_CHARTS/index-cache.yaml
   msg "create container $SVC_NAME"
   $SUDO docker create --name $SVC_NAME \
     -v $(cd $DIR_CHARTS && pwd):/charts \
