@@ -1,0 +1,116 @@
+#!/usr/bin/env perl
+# author: joe.zheng
+
+use strict;
+use warnings;
+
+use File::Basename;
+use Getopt::Long;
+
+my $self    = basename($0);
+my $version = '24.07.12';
+my $DEBUG   = $ENV{DEBUG} // 0;
+
+my $separator = '/';
+my $example   = <<'EOF';
+# 1st comment
+  1st line with prefix
+  # 2nd comment with leading spaces
+  * 2nd level with *
+  - 2nd level with -
+    2nd level
+    2nd level with #
+    * 3rd level with *
+    - 3rd level with -
+      3rd level
+      # tailing whitespaces will be removed
+      3nd level with tailing whitespaces    
+    2nd level again
+  1st level again
+EOF
+
+sub usage {
+  print <<"EOU";
+Usage: $self [-h] [-s <sep>] <src>...
+  Parse a multi-level list and output each item separated by a separator
+
+  -s <sep>: the separator, default: '$separator'
+  -h:       help message
+
+  <src>... files to parse or stdin if no file is given
+
+Example:
+
+  # Self-test
+  $self <<EOF
+$example
+EOF
+
+  # Create folders based on a template
+  $self <<EOF | xargs mkdir -p
+share
+  bin
+  pkg
+    linux
+    macos
+  img
+    oci
+    vm
+EOF
+
+Version: $version
+EOU
+  exit;
+}
+
+my $help;
+GetOptions("sep|s=s" => \$separator, "help|h" => \$help,) or usage();
+usage() if $help;
+
+sub dbg { local $\ = "\n"; print STDERR "> @_" if $DEBUG }
+
+my $prefix;        # prefix on each line
+my $width;         # number of spaces for each indent
+my @nodes = ();    # current nodes on each level
+my $depth = 0;     # current indentation level
+
+foreach my $line (<>) {
+  chomp $line;
+  dbg "line: $line";
+
+  # remove comments
+  $line =~ s/^\s*#.*//;
+
+  # skip blank line
+  next if $line =~ /^\s*$/;
+
+  # find prefix on the first non-blank line
+  unless (defined $prefix) {
+    $prefix = $line =~ s/^(\s+)// ? $1 : '';
+  }
+
+  # remove prefix if necessary
+  $line =~ s/^\Q$prefix\E// if $prefix;
+
+  # replace '*' or '-' to ' '
+  $line =~ s/^(\s*)[*-]([*-]*\s+)/$1 $2/g;
+
+  my $spaces = ($line =~ s/^(\s+)//) ? length $1 : 0;
+  dbg "spaces: $spaces";
+
+  # find width on the first valid line
+  if ($spaces && !defined $width) {
+    $width = $spaces;
+    dbg "width: $width";
+  }
+
+  $depth = $width ? int($spaces / $width) : 0;
+  dbg "depth: $depth";
+
+  # remove tailing whitespaces
+  $line =~ s/\s+$//;
+  next unless $line;
+
+  $nodes[$depth] = $line;
+  print join($separator, @nodes[0 .. $depth]), "\n";
+}
