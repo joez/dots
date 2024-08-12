@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 24.08.12
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+SUDO=""
+if [[ $(id -u) != "0" ]]; then
+  SUDO="sudo"
+fi
+
+DIR_ROOT="${DIR_ROOT:-$(dirname $0)/registry}"
+SVC_PORT="${SVC_PORT:-5000}"  # port number
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [command] [args]
+  Docker registry as a pull-through cache with security control
+
+  The default configuraion is very restricted, customize to meet your needs
+
+Commands:
+  start  initialize and start the registry
+  stop   stop the registry
+
+Environment variables:
+  DRY_RUN:  print out information only if it is "y"
+  DIR_ROOT: the folder for $SELF, default: $DIR_ROOT
+  SVC_PORT: port number to listen: default: $SVC_PORT
+
+Examples:
+
+  1. Start registry
+    $SELF start
+
+  2. Stop registry
+    $SELF stop
+
+Version: $SELF_VERSION
+EOF
+}
+
+function msg {
+  echo "> $@"
+}
+
+function err {
+  echo "> $@" >&2
+}
+
+if [[ -z "$1" || "$1" == "-h" ]]; then
+  usage && exit
+else
+  cmd="$1"
+  shift
+fi
+
+DIR_DATA="$DIR_ROOT/data"
+msg "generate folder: $DIR_ROOT"
+[[ $DRY_RUN != 'y' ]] && mkdir -p $DIR_ROOT $DIR_DATA
+
+if [[ "$cmd" == "start" ]]; then
+  for n in docker-compose.yml proxy.conf registry.env; do
+    f="$DIR_ROOT/$n"
+    msg "generating $f"
+    if [[ -f $f ]]; then
+      msg "already exists, skip"
+    else
+      if [[ $DRY_RUN != 'y' ]]; then
+        if [[ $n == "docker-compose.yml" ]]; then
+          cat <<EOF > $f
+version: "3"
+
+services:
+    nginx:
+      image: "nginx:1.23.4-alpine"
+      ports:
+        - $SVC_PORT:5000
+      depends_on:
+        - registry
+      volumes:
+        - ./proxy.conf:/etc/nginx/nginx.conf:ro
+
+    registry:
+      image: registry:2
+      env_file:
+        - registry.env
+      volumes:
+        - ./data:/var/lib/registry
+EOF
+        elif [[ $n == "proxy.conf" ]]; then
+          cat <<EOF > $f
+user  nginx;
+worker_processes  auto;
+
+error_log  /var/log/nginx/error.log notice;
+pid        /var/run/nginx.pid;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format  main  '\$remote_addr - \$remote_user [\$time_local] "\$request" '
+                      '\$status \$body_bytes_sent "$http_referer" '
+                      '"\$http_user_agent" "\$http_x_forwarded_for"';
+    access_log  /var/log/nginx/access.log  main;
+
+    sendfile           on;
+    keepalive_timeout  65;
+
+    limit_conn_zone \$binary_remote_addr zone=addr:10m;
+    limit_req_zone  \$binary_remote_addr zone=one:10m rate=1r/s;
+
+    server {
+        listen       5000;
+        server_name  localhost;
+
+        # default security control, very restricted!
+        limit_conn addr 3;
+        limit_req  zone=one burst=20;
+        limit_rate 200k;
+
+        location / {
+            proxy_pass http://registry:5000;
+            proxy_set_header  Host              \$http_host;   # required for docker client's sake
+            proxy_set_header  X-Real-IP         \$remote_addr; # pass on real client's IP
+            proxy_set_header  X-Forwarded-For   \$proxy_add_x_forwarded_for;
+            proxy_set_header  X-Forwarded-Proto \$scheme;
+        }
+    }
+}
+EOF
+        elif [[ $n == "registry.env" ]]; then
+          cat <<EOF > $f
+REGISTRY_PROXY_REMOTEURL="https://registry-1.docker.io"
+REGISTRY_PROXY_TTL=2
+REGISTRY_STORAGE_DELETE_ENABLED="true"
+EOF
+        fi
+      fi
+      msg "$f is generated"
+    fi
+  done
+
+  msg "start registry"
+  [[ $DRY_RUN != 'y' ]] && (cd $DIR_ROOT && docker compose up -d)
+elif [[ "$cmd" == "stop" ]]; then
+  msg "stop registry"
+  [[ $DRY_RUN != 'y' ]] && (cd $DIR_ROOT && docker compose down)
+else
+  err "not supported cmd: $cmd"
+  exit 1
+fi
+
+msg "done"
