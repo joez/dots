@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# author: joe.zheng
+# version: 24.10.13
+
+set -e
+
+SELF="$(basename $0)"
+SELF_VERSION="$(sed -n '1,4s/# version: \(.*\)/\1/p' $0)"
+
+FBDEV="/dev/fb0"  # framebuffer device
+COLOR="red"       # color name or BGRA value, e.g. "\xFF\xFF\xFF\xFF"
+
+WIDTH=1280        # framebuffer width
+BPP=32            # bits per pixel, hardcoded for simplicity
+
+DEBUG=${DEBUG:-n} # for debugging, y or n
+
+function main() {
+  # parse command-line options
+  while getopts ":c:f:h" opt; do
+    case $opt in
+      c) COLOR="$OPTARG" ;;
+      f) FBDEV="$OPTARG" ;;
+      h) usage; exit 0 ;;
+      *) echo "Invalid option: -${OPTARG}" >&2; usage; exit 1 ;;
+    esac
+  done
+  shift $((OPTIND-1))
+  
+  set_fbdev "$FBDEV"
+  set_color "$COLOR"
+
+  cmd="$1"
+  if [[ -n "$cmd" ]]; then
+    shift
+    case "$cmd" in
+      set_pixel | draw_line | draw_rect | fill_rect) $cmd "$@" ;;
+      *) echo "Invalid command: $cmd" >&2; usage; exit 1 ;;
+    esac
+  else
+    # self-test
+    local x=0 y=0 s=10
+    local w=8 h=4 b=1
+    draw_rect $x $y $((x + s * w)) $((y + s * h))
+    for i in $(seq $w); do
+      draw_line $x $y $((x + s * i)) $((y + s * h))
+      draw_line $((x + s * w)) $y $((x + s * (i - 1))) $((y + s * h))
+    done
+    y=$((y + s * (h + b))) w=2
+    for c in r g b w; do
+      set_color $c
+      fill_rect $x $y $((x + s * w)) $((y + s * h))
+      x=$((x + s * (w + b)))
+    done
+  fi
+
+  if [[ $DEBUG == 'y' ]]; then
+    tput cud 1 && tput nel
+  fi
+}
+
+function usage() {
+  cat <<EOF
+Usage: $SELF [options] [cmd] [args]
+
+  Draw simple shapes to the framebuffer.
+
+  Switch to a non-desktop TTY first to prevent overwritten, e.g.:
+
+    chvt 3
+
+Options:
+  -c <color>  color to draw (default: $COLOR)
+  -f <fbdev>  framebuffer device (default: $FBDEV)
+  -h          show this help message
+
+Commands:
+  set_pixel <x> <y>
+  draw_line <x1> <y1> <x2> <y2>
+  draw_rect <x1> <y1> <x2> <y2>
+  fill_rect <x1> <y1> <x2> <y2>
+
+  The self-test will be run if no command is specified.
+
+Examples:
+  1. Run the self-test
+
+    sudo $SELF
+
+  2. Draw a line in blue
+
+    sudo $SELF -c blue draw_line 10 10 20 20
+
+Version: $SELF_VERSION
+EOF
+
+}
+
+function set_fbdev() {
+  local fbdev="$1"
+  local fbinfo="/sys/class/graphics/${fbdev##*/}"
+  local fbsize="$fbinfo/virtual_size"
+  local fbbpp="$fbinfo/bits_per_pixel"
+  if [[ -e "$fbsize" ]]; then
+    WIDTH="$(cut -d, -f1 $fbsize)"
+  fi
+  if [[ -e "$fbbpp" ]]; then
+    local bpp="$(< $fbbpp)"
+    if [[ "$bpp" != "$BPP" ]]; then
+      echo "WARNING: bits per pixel $bpp is not supported"
+    fi
+  fi
+  FBDEV="$fbdev"
+}
+
+function set_color() {
+  local color="$1"
+  # convert known color name to value
+  case "$color" in
+    b|blue)  color="\xFF\x00\x00\xFF" ;;
+    g|green) color="\x00\xFF\x00\xFF" ;;
+    r|red)   color="\x00\x00\xFF\xFF" ;;
+    w|white) color="\xFF\xFF\xFF\xFF" ;;
+  esac
+  COLOR="$color"
+}
+
+function set_pixel() {
+  local x=$1
+  local y=$2
+
+  local offset=$((y * WIDTH + x))
+  if [[ $DEBUG == 'y' ]]; then
+    tput cup $y $x && printf "+"
+  else
+    printf "$COLOR" | dd bs=$((BPP / 8)) seek=$offset of=$FBDEV &>/dev/null
+  fi
+}
+
+function draw_line() {
+  local x1=$1
+  local y1=$2
+  local x2=$3
+  local y2=$4
+
+  local dx=$((x2 - x1))
+  local dy=$((y2 - y1))
+  local ix=$((dx > 0 ? 1 : -1))
+  local iy=$((dy > 0 ? 1 : -1))
+
+  dx=$((dx > 0 ? dx : -dx))
+  dy=$((dy > 0 ? dy : -dy))
+
+  # using Bresenham's algorithm
+  local x=$x1
+  local y=$y1
+  if ((dx > dy)); then
+    local err=$((2 * dy - dx))
+    while ((x != x2 + ix)); do
+      set_pixel $x $y
+      if ((err > 0)); then
+        y=$((y + iy))
+        err=$((err - 2 * dx))
+      fi
+      x=$((x + ix))
+      err=$((err + 2 * dy))
+    done
+  else
+    local err=$((2 * dx - dy))
+    while ((y != y2 + iy)); do
+      set_pixel $x $y
+      if ((err > 0)); then
+        x=$((x + ix))
+        err=$((err - 2 * dy))
+      fi
+      y=$((y + iy))
+      err=$((err + 2 * dx))
+    done
+  fi
+}
+
+function draw_rect() {
+  local x1=$1
+  local y1=$2
+  local x2=$3
+  local y2=$4
+
+  # the top and bottom sides
+  draw_line $x1 $y1 $x2 $y1
+  draw_line $x1 $y2 $x2 $y2
+
+  # the left and right sides
+  draw_line $x1 $y1 $x1 $y2
+  draw_line $x2 $y1 $x2 $y2
+}
+
+function fill_rect() {
+  local x1=$1
+  local y1=$2
+  local x2=$3
+  local y2=$4
+
+  local dx=$((x2 - x1))
+  local dy=$((y2 - y1))
+  local ix=$((dx > 0 ? 1 : -1))
+  local iy=$((dy > 0 ? 1 : -1))
+  local x y
+  for ((y = y1; y != y2 + iy; y = y + iy)); do
+    for ((x = x1; x != x2 + ix; x = x + ix)); do
+      set_pixel $x $y
+    done
+  done
+}
+
+main "$@"
