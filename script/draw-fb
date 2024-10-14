@@ -38,24 +38,7 @@ function main() {
       *) echo "Invalid command: $cmd" >&2; usage; exit 1 ;;
     esac
   else
-    # self-test
-    local x=0 y=0 s=10
-    local w=8 h=4 b=1
-    draw_rect $x $y $((x + s * w)) $((y + s * h))
-    for i in $(seq $w); do
-      draw_line $x $y $((x + s * i)) $((y + s * h))
-      draw_line $((x + s * w)) $y $((x + s * (i - 1))) $((y + s * h))
-    done
-    y=$((y + s * (h + b))) w=2
-    for c in r g b w; do
-      set_color $c
-      fill_rect $x $y $((x + s * w)) $((y + s * h))
-      x=$((x + s * (w + b)))
-    done
-  fi
-
-  if [[ $DEBUG == 'y' ]]; then
-    tput cud 1 && tput nel
+    self_test
   fi
 }
 
@@ -94,6 +77,31 @@ Examples:
 Version: $SELF_VERSION
 EOF
 
+}
+
+function self_test() {
+  local x=0 y=0 s=10
+  local w=8 h=4 b=1
+
+  if [[ $DEBUG == 'y' ]]; then
+    s=5
+  fi
+
+  draw_rect $x $y $((x + s * w)) $((y + s * h))
+  for i in $(seq $w); do
+    draw_line $x $y $((x + s * i)) $((y + s * h))
+    draw_line $((x + s * w)) $y $((x + s * (i - 1))) $((y + s * h))
+  done
+  y=$((y + s * (h + b))) w=2
+  for c in r g b w; do
+    set_color $c
+    fill_rect $x $y $((x + s * w)) $((y + s * h))
+    x=$((x + s * (w + b)))
+  done
+
+  if [[ $DEBUG == 'y' ]]; then
+    tput cud 1 && tput nel
+  fi
 }
 
 function set_fbdev() {
