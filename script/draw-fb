@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.10.13
+# version: 24.10.14
 
 set -e
 
@@ -138,45 +138,35 @@ function set_pixel() {
 }
 
 function draw_line() {
-  local x1=$1
-  local y1=$2
-  local x2=$3
-  local y2=$4
+  local x0=$1
+  local y0=$2
+  local x1=$3
+  local y1=$4
 
-  local dx=$((x2 - x1))
-  local dy=$((y2 - y1))
-  local ix=$((dx > 0 ? 1 : -1))
-  local iy=$((dy > 0 ? 1 : -1))
+  # Bresenham's algorithm
+  local dx=$((x0 < x1 ? x1 - x0 : x0 - x1)) #  abs
+  local dy=$((y0 < y1 ? y0 - y1 : y1 - y0)) # -abs
+  local ix=$((x0 < x1 ? 1 : -1))
+  local iy=$((y0 < y1 ? 1 : -1))
+  local er=$((dx + dy))
 
-  dx=$((dx > 0 ? dx : -dx))
-  dy=$((dy > 0 ? dy : -dy))
-
-  # using Bresenham's algorithm
-  local x=$x1
-  local y=$y1
-  if ((dx > dy)); then
-    local err=$((2 * dy - dx))
-    while ((x != x2 + ix)); do
-      set_pixel $x $y
-      if ((err > 0)); then
-        y=$((y + iy))
-        err=$((err - 2 * dx))
+  while true; do
+    set_pixel $x0 $y0
+    if ((er * 2 >= dy)); then
+      if ((x0 == x1)); then
+        break
       fi
-      x=$((x + ix))
-      err=$((err + 2 * dy))
-    done
-  else
-    local err=$((2 * dx - dy))
-    while ((y != y2 + iy)); do
-      set_pixel $x $y
-      if ((err > 0)); then
-        x=$((x + ix))
-        err=$((err - 2 * dy))
+      er=$((er + dy))
+      x0=$((x0 + ix))
+    fi
+    if ((er * 2 <= dx)); then
+      if ((y0 == y1)); then
+        break
       fi
-      y=$((y + iy))
-      err=$((err + 2 * dx))
-    done
-  fi
+      er=$((er + dx))
+      y0=$((y0 + iy))
+    fi
+  done
 }
 
 function draw_rect() {
