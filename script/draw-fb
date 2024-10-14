@@ -76,9 +76,9 @@ Options:
 
 Commands:
   set_pixel <x> <y>
-  draw_line <x1> <y1> <x2> <y2>
-  draw_rect <x1> <y1> <x2> <y2>
-  fill_rect <x1> <y1> <x2> <y2>
+  draw_line <x0> <y0> <x1> <y1>
+  draw_rect <x0> <y0> <x1> <y1>
+  fill_rect <x0> <y0> <x1> <y1>
 
   The self-test will be run if no command is specified.
 
@@ -170,35 +170,35 @@ function draw_line() {
 }
 
 function draw_rect() {
-  local x1=$1
-  local y1=$2
-  local x2=$3
-  local y2=$4
+  local x0=$1
+  local y0=$2
+  local x1=$3
+  local y1=$4
 
   # the top and bottom sides
-  draw_line $x1 $y1 $x2 $y1
-  draw_line $x1 $y2 $x2 $y2
+  draw_line $x0 $y0 $x1 $y0
+  draw_line $x0 $y1 $x1 $y1
 
   # the left and right sides
-  draw_line $x1 $y1 $x1 $y2
-  draw_line $x2 $y1 $x2 $y2
+  draw_line $x0 $y0 $x0 $y1
+  draw_line $x1 $y0 $x1 $y1
 }
 
 function fill_rect() {
-  local x1=$1
-  local y1=$2
-  local x2=$3
-  local y2=$4
+  local x0=$1
+  local y0=$2
+  local x1=$3
+  local y1=$4
 
-  local dx=$((x2 - x1))
-  local dy=$((y2 - y1))
-  local ix=$((dx > 0 ? 1 : -1))
-  local iy=$((dy > 0 ? 1 : -1))
-  local x y
-  for ((y = y1; y != y2 + iy; y = y + iy)); do
-    for ((x = x1; x != x2 + ix; x = x + ix)); do
-      set_pixel $x $y
-    done
+  # draw line by line
+  local iy=$((y0 < y1 ? 1 : -1))
+  while true; do
+    draw_line $x0 $y0 $x1 $y0
+	if ((y0 == y1)); then
+      break
+    else
+      y0=$((y0 + iy))
+	fi
   done
 }
 
