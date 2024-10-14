@@ -14,6 +14,13 @@ WIDTH=1280        # framebuffer width
 BPP=32            # bits per pixel, hardcoded for simplicity
 
 DEBUG=${DEBUG:-n} # for debugging, y or n
+if [[ $DEBUG == 'y' ]]; then
+  function dbg() {
+    echo "> ${FUNCNAME[1]}: $@" >&2
+  }
+else
+  function dbg() { :; }
+fi
 
 function main() {
   # parse command-line options
@@ -74,12 +81,17 @@ Examples:
 
     sudo $SELF -c blue draw_line 10 10 20 20
 
+  3. Fill a rectangle in DEBUG mode
+
+    DEBUG=y $SELF fill_rect 0 0 10 5 2>dbg.log
+
 Version: $SELF_VERSION
 EOF
 
 }
 
 function self_test() {
+  dbg "$@"
   local x=0 y=0 s=10
   local w=8 h=4 b=1
 
@@ -105,6 +117,7 @@ function self_test() {
 }
 
 function set_fbdev() {
+  dbg "$@"
   local fbdev="$1"
   local fbinfo="/sys/class/graphics/${fbdev##*/}"
   local fbsize="$fbinfo/virtual_size"
@@ -122,6 +135,7 @@ function set_fbdev() {
 }
 
 function set_color() {
+  dbg "$@"
   local color="$1"
   # convert known color name to value
   case "$color" in
@@ -134,6 +148,7 @@ function set_color() {
 }
 
 function set_pixel() {
+  #dbg "$@"
   local x=$1
   local y=$2
 
@@ -146,6 +161,7 @@ function set_pixel() {
 }
 
 function draw_line() {
+  dbg "$@"
   local x0=$1
   local y0=$2
   local x1=$3
@@ -178,6 +194,7 @@ function draw_line() {
 }
 
 function draw_rect() {
+  dbg "$@"
   local x0=$1
   local y0=$2
   local x1=$3
@@ -193,6 +210,7 @@ function draw_rect() {
 }
 
 function fill_rect() {
+  dbg "$@"
   local x0=$1
   local y0=$2
   local x1=$3
