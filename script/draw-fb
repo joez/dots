@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.10.14
+# version: 24.10.15
 
 set -e
 
@@ -37,16 +37,16 @@ function main() {
   set_fbdev "$FBDEV"
   set_color "$COLOR"
 
-  cmd="$1"
-  if [[ -n "$cmd" ]]; then
+  cmd="exec_cmds"
+  if [[ -n "$1" ]]; then
+    cmd="$1"
     shift
-    case "$cmd" in
-      set_pixel | draw_line | draw_rect | fill_rect) $cmd "$@" ;;
-      *) echo "Invalid command: $cmd" >&2; usage; exit 1 ;;
-    esac
-  else
-    self_test
   fi
+  case "$cmd" in
+    set_pixel | draw_line | draw_rect | fill_rect | \
+    self_test | exec_cmds ) $cmd "$@" ;;
+    *) echo "Invalid command: $cmd" >&2; usage; exit 1 ;;
+  esac
 }
 
 function usage() {
@@ -54,6 +54,9 @@ function usage() {
 Usage: $SELF [options] [cmd] [args]
 
   Draw simple shapes to the framebuffer.
+
+  If no command is specified, it will wait for input from STDIN,
+  type the command line by line and press CTRL + D to finish.
 
   Switch to a non-desktop TTY first to prevent overwritten, e.g.:
 
@@ -69,25 +72,37 @@ Commands:
   draw_line <x0> <y0> <x1> <y1>
   draw_rect <x0> <y0> <x1> <y1>
   fill_rect <x0> <y0> <x1> <y1>
-
-  The self-test will be run if no command is specified.
+  exec_cmds [script]            run commands in script (default: /dev/stdin)
+  self_test                     do the self-test to draw pre-defined shapes
 
 Examples:
-  1. Run the self-test
+  1. Do the self-test
 
-    sudo $SELF
+    sudo $SELF self_test
 
   2. Draw a line in blue
 
     sudo $SELF -c blue draw_line 10 10 20 20
 
-  3. Fill a rectangle in DEBUG mode
+  3. Draw multiple shapes in batch
+
+    sudo $SELF <<EOS
+    draw_line 0 0 10 10
+    draw_rect 5 5 10 10
+    EOS
+
+  4. Fill a rectangle in DEBUG mode
 
     DEBUG=y $SELF fill_rect 0 0 10 5 2>dbg.log
 
 Version: $SELF_VERSION
 EOF
 
+}
+
+function exec_cmds() {
+  dbg "$@"
+  . "${1:-/dev/stdin}"
 }
 
 function self_test() {
