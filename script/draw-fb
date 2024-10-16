@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.10.15
+# version: 24.10.16
 
 set -e
 
@@ -15,8 +15,12 @@ BPP=32            # bits per pixel, hardcoded for simplicity
 
 DEBUG=${DEBUG:-n} # for debugging, y or n
 if [[ $DEBUG == 'y' ]]; then
+  STATUS_LINE=$(($(tput lines) - 2))
+  function reset_cursor() {
+    tput cup $STATUS_LINE 0 && tput el
+  }
   function dbg() {
-    echo "> ${FUNCNAME[1]}: $@" >&2
+    reset_cursor && echo "> ${FUNCNAME[1]}: $@" >&2
   }
 else
   function dbg() { :; }
@@ -47,6 +51,9 @@ function main() {
     self_test | exec_cmds ) $cmd "$@" ;;
     *) echo "Invalid command: $cmd" >&2; usage; exit 1 ;;
   esac
+  if [[ $DEBUG == 'y' ]]; then
+    reset_cursor
+  fi
 }
 
 function usage() {
@@ -125,10 +132,6 @@ function self_test() {
     fill_rect $x $y $((x + s * w)) $((y + s * h))
     x=$((x + s * (w + b)))
   done
-
-  if [[ $DEBUG == 'y' ]]; then
-    tput cud 1 && tput nel
-  fi
 }
 
 function set_fbdev() {
