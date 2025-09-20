@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # author: joe.zheng
-# version: 24.04.02
+# version: 25.09.20
 
 set -e
 
@@ -310,22 +310,12 @@ function minimal_version() {
 
 function check_prerequisites() {
   msg "check prerequisites"
-  if [[ -z $(which perl) ]]; then
-    err "perl is not available"
-    exit 1
-  fi
-  if [[ -z $(which curl) ]]; then
-    err "curl is not available"
-    exit 1
-  fi
-  if [[ -z $(which openssl) ]]; then
-    err "openssl is not available"
-    exit 1
-  fi
-  if [[ -z $(which $CRI_RUNTIME) ]]; then
-    err "$CRI_RUNTIME is not available"
-    exit 1
-  fi
+  for tool in perl curl openssl gpg $CRI_RUNTIME; do
+    if [[ -z $(which $tool) ]]; then
+      err "$tool is not available, install it first"
+      exit 1
+    fi
+  done
 }
 
 function check_container() {
@@ -519,7 +509,7 @@ function save_package_list() {
 
   mkdir -p $(dirname $path)
 
-  if [[ $dist == "ubuntu" ]]; then
+  if [[ $dist == "ubuntu" || $dist == "debian" ]]; then
     ls -1 /var/cache/apt/archives/*.deb | sort > $path
   elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
     if [[ -d /var/cache/dnf ]]; then
@@ -620,7 +610,7 @@ function install_k8s() {
   if [[ $OFFLINE == "y" ]]; then
     msg "WARNING: offline mode, cache must be ready"
     msg "try to install package from the cache"
-    if [[ $dist == "ubuntu" ]]; then
+    if [[ $dist == "ubuntu" || $dist == "debian" ]]; then
       msg "install $cachedir/*.deb"
       $SUDO dpkg -i $cachedir/*.deb
       msg "no auto update for $K8S_PKGS"
@@ -649,7 +639,7 @@ function install_k8s() {
   local packages_new="$CACHE_RUN/packages-new.txt"
 
   save_package_list "$packages_old"
-  if [[ $dist == "ubuntu" ]]; then
+  if [[ $dist == "ubuntu" || $dist == "debian" ]]; then
     local keydir="/etc/apt/keyrings"
     local gpgkey="$keydir/kubernetes-apt-keyring.gpg"
     local list="/etc/apt/sources.list.d/kubernetes.list"
@@ -782,7 +772,7 @@ function ensure_uninstalled() {
 
   if [[ -n $(which kubelet) ]]; then
     local dist=$(dist_name)
-    if [[ $dist == "ubuntu" ]]; then
+    if [[ $dist == "ubuntu" || $dist == "debian" ]]; then
       $SUDO apt autoremove $K8S_PKGS
     elif [[ $dist == "centos" || $dist == "openeuler" ]]; then
       $SUDO yum remove $K8S_PKGS
