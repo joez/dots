@@ -61,6 +61,7 @@ CRI_DOCKERD_BASEURL="https://github.com/Mirantis/cri-dockerd" # cri-dockerd repo
 CRI_DOCKERD_SOCKET="unix:///var/run/cri-dockerd.sock"         # cri-dockerd socket path
 
 CRI_CONTAINERD_SOCKET="unix:///run/containerd/containerd.sock" # containerd socket path
+CRI_CONTAINERD_CONFIG="/etc/containerd/config.toml"            # containerd config file
 
 K8S_PKG_REPO="https://pkgs.k8s.io/core:/stable:"              # k8s package repo
 K8S_PKG_MIRROR="https://mirrors.aliyun.com/kubernetes"        # k8s package mirror
@@ -1126,6 +1127,15 @@ function init_cluster() {
     repo_config="imageRepository: \"$repo\""
     msg "mirror is required, use image repository: $repo"
   fi
+  if [[ $CRI_RUNTIME == "containerd" ]]; then
+    msg "configure sandbox_image in $CRI_CONTAINERD_CONFIG"
+    local registry="$K8S_REG_REPO"
+    if [[ $USE_K8S_MIRROR == "y" ]]; then
+      registry="$K8S_REG_MIRROR"
+    fi
+    $SUDO sed -i -e "/sandbox_image/ s#\".*/pause:#\"$registry/pause:#" $CRI_CONTAINERD_CONFIG
+    $SUDO systemctl restart containerd
+  fi
   if [[ $NEED_CRI_DOCKERD == "y" ]]; then
     sock_option="--cri-socket $CRI_DOCKERD_SOCKET"
     sock_config="  criSocket: \"$CRI_DOCKERD_SOCKET\""
@@ -1140,8 +1150,8 @@ function init_cluster() {
   local cgroupdriver="systemd"
   if [[ $CRI_RUNTIME == 'docker' ]]; then
     cgroupdriver="$($CRI_CLIENT info -f {{.CgroupDriver}})"
-  else
-    if ! $CRI_RUNTIME config dump | grep -E 'SystemdCgroup\s*=\s*true'; then
+  elif [[ $CRI_RUNTIME == "containerd" ]]; then
+    if grep -E 'SystemdCgroup\s*=\s*false' $CRI_CONTAINERD_CONFIG; then
       cgroupdriver="cgroupfs"
     fi
   fi
