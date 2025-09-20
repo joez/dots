@@ -320,7 +320,7 @@ function check_prerequisites() {
 
 function check_container() {
   msg "check container image downloading"
-  local image="docker.io/library/hello-world:latest"
+  local image="public.ecr.aws/docker/library/hello-world:latest"
   if ! $CRI_CLIENT image pull $image >/dev/null 2>&1; then
     err "$CRI_CLIENT image pull $image failed, check $CRI_RUNTIME configuration"
     exit 1
